@@ -33,55 +33,105 @@
 
 ## 🏗️ Architecture Overview
 
-This project implements a **production‑ready microservices architecture** following **Clean Architecture** and **Domain-Driven Design** principles.
+This project implements a **production-ready microservices architecture** following  
+**Clean Architecture** and **Domain-Driven Design (DDD)** principles.
+
+---
+
+### 🌐 System Architecture
 
 ```mermaid
 graph TB
-    subgraph "Client Layer"
-        A[React Frontend]
-        B[Mobile App]
-    end
 
-    subgraph "API Gateway"
-        C[NGINX Reverse Proxy]
-    end
+%% =======================
+%% Client Layer
+%% =======================
+subgraph CLIENT["👥 Client Layer"]
+    A[React Frontend]
+    B[Mobile App]
+end
 
-    subgraph "Microservices"
-        D[Auth Service<br/>.NET 9]
-        E[Blog Service<br/>Ruby on Rails]
-        F[AI Service<br/>FastAPI]
-        G[Core Service<br/>Go Gin]
-    end
+%% =======================
+%% API Gateway
+%% =======================
+subgraph GATEWAY["🌐 API Gateway"]
+    C[NGINX Reverse Proxy]
+end
 
-    subgraph "Message Brokers"
-        H[RabbitMQ<br/>Command Bus]
-        I[Apache Kafka<br/>Event Streaming]
-    end
+%% =======================
+%% Microservices
+%% =======================
+subgraph SERVICES["⚙️ Microservices"]
+    D[Auth Service<br/>.NET 9]
+    E[Blog Service<br/>Ruby on Rails]
+    F[AI Service<br/>FastAPI]
+    G[Core Service<br/>Go Gin]
+end
 
-    subgraph "Data Layer"
-        J[(PostgreSQL)]
-        K[(MongoDB)]
-        L[(Redis Cache)]
-    end
+%% =======================
+%% Message Brokers
+%% =======================
+subgraph MESSAGING["📨 Message Brokers"]
+    H[RabbitMQ<br/>Command Bus]
+    I[Apache Kafka<br/>Event Streaming]
+end
 
-    A --> C
-    B --> C
-    C --> D
-    C --> E
-    C --> F
-    C --> G
-    
-    D --> H
-    D --> I
-    E --> H
-    F --> I
-    G --> H
-    
-    D --> J
-    D --> L
-    E --> K
-    F --> J
-    G --> J
+%% =======================
+%% Data Layer
+%% =======================
+subgraph DATA["🗄️ Data Layer"]
+    J[(PostgreSQL)]
+    K[(MongoDB)]
+    L[(Redis Cache)]
+end
+
+%% =======================
+%% Connections
+%% =======================
+
+A --> C
+B --> C
+
+C --> D
+C --> E
+C --> F
+C --> G
+
+D --> H
+D --> I
+E --> H
+F --> I
+G --> H
+
+D --> J
+D --> L
+E --> K
+F --> J
+G --> J
+```
+
+---
+
+### 🧠 Architecture Highlights
+
+- 🧩 **Microservices-based design**
+- 🏛️ **Clean Architecture per service**
+- 📦 **Event-driven communication**
+- ⚡ **Low coupling via API Gateway**
+- 📨 **Async messaging (RabbitMQ + Kafka)**
+- 🗄️ **Polyglot persistence (SQL + NoSQL)**
+- 🚀 **Scalable cloud-native structure**
+
+---
+
+### 🔄 Data Flow Summary
+
+1. Client sends request → API Gateway  
+2. Gateway routes to correct microservice  
+3. Service executes business logic  
+4. Events emitted via RabbitMQ/Kafka  
+5. Data stored in appropriate database  
+6. Cache layer (Redis) improves performance  
 
 # 🚀 Alexander Portfolio V2
 
@@ -469,7 +519,4 @@ ADMIN_MASTER_KEY=SUPER_SECRET_ADMIN_KEY_2024
 <div align="center">
 
 # ⬆ Back to Top
-
-Made with ❤️ using Microservices, .NET 9, Docker, Kafka, RabbitMQ, Redis & Nx
-
 </div>

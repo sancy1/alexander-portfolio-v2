@@ -1,5 +1,4 @@
-bash
-cat > ~/Desktop/alexander-portfolio-v2/shared/event-schemas/README.md << 'EOF'
+
 # Event Schemas for Alexander Portfolio Microservices
 
 ## Overview

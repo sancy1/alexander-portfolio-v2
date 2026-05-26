@@ -1,4 +1,3 @@
-services:
   - type: web
     name: api-gateway
     runtime: image
@@ -7,11 +6,6 @@ services:
     dockerfilePath: ./api-gateway/Dockerfile
     dockerContext: ./api-gateway
     envVars:
-      - key: AUTH_SERVICE_URL
-        fromService:
-          name: auth-service
-          type: web
-          property: hostport
       - key: AUTH_SERVICE_HOST
         fromService:
           name: auth-service
@@ -56,4 +50,3 @@ services:
         sync: false
       - key: GITHUB_CLIENT_SECRET
         sync: false
-

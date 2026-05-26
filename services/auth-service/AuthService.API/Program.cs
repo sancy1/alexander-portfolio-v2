@@ -2,6 +2,8 @@
 // Purpose: Application entry point with database resilience and Swagger
 // Layer: API
 
+// echo "// Trigger deployment - CORS fix" >> services/auth-service/AuthService.API/Program.cs
+
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Models;
 using System.Reflection;

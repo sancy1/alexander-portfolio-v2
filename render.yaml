@@ -1,3 +1,4 @@
+services:
   - type: web
     name: api-gateway
     runtime: image
@@ -11,6 +12,11 @@
           name: auth-service
           type: web
           property: host
+      - key: AUTH_SERVICE_PORT
+        fromService:
+          name: auth-service
+          type: web
+          property: port
 
   - type: web
     name: auth-service

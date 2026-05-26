@@ -64,6 +64,73 @@
 
 
 
+# name: Deploy API Gateway
+
+# on:
+#   push:
+#     paths:
+#       - 'api-gateway/**'
+#       - '.github/workflows/deploy-api-gateway.yml'
+#     branches:
+#       - main
+
+# env:
+#   REGISTRY: ghcr.io
+#   IMAGE_NAME: ${{ github.repository_owner }}/api-gateway
+
+# jobs:
+#   build-and-deploy:
+#     runs-on: ubuntu-latest
+    
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v4
+      
+#       - name: Verify Dockerfile exists
+#         id: check
+#         run: |
+#           if [ ! -f "api-gateway/Dockerfile" ]; then
+#             echo "❌ Dockerfile not found!"
+#             exit 1
+#           fi
+#           echo "✅ Dockerfile found"
+      
+#       - name: Log in to Container Registry
+#         uses: docker/login-action@v3
+#         with:
+#           registry: ${{ env.REGISTRY }}
+#           username: ${{ github.actor }}
+#           password: ${{ secrets.GITHUB_TOKEN }}
+      
+#       - name: Build and Push Docker Image
+#         run: |
+#           cd api-gateway
+#           docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} -f Dockerfile .
+#           docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+#           docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+#           docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+      
+#       - name: Deploy to Render
+#         run: |
+#           curl -X POST \
+#             https://api.render.com/deploy/srv-${{ secrets.RENDER_GATEWAY_SERVICE_ID }} \
+#             -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+#             -H "Content-Type: application/json" \
+#             -d '{"imageUrl":"${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"}' \
+#             -f
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -88,35 +155,31 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/api-gateway
+  IMAGE_NAME: ${{ github.repository }}/api-gateway
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
       
-      - name: Verify Dockerfile exists
-        id: check
-        run: |
-          if [ ! -f "api-gateway/Dockerfile" ]; then
-            echo "❌ Dockerfile not found!"
-            exit 1
-          fi
-          echo "✅ Dockerfile found"
-      
       - name: Log in to Container Registry
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
+          username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
       
       - name: Build and Push Docker Image
         run: |
           cd api-gateway
+          chmod +x docker-entrypoint.sh
           docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} -f Dockerfile .
           docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
           docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}

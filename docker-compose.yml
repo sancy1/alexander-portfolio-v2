@@ -1,0 +1,232 @@
+# networks:
+#   portfolio-network:
+#     driver: bridge
+
+# services:
+#   # ============================================================================
+#   # INFRASTRUCTURE SERVICES
+#   # ============================================================================
+  
+#   postgres:
+#     image: postgres:16-alpine
+#     container_name: portfolio-postgres
+#     environment:
+#       POSTGRES_USER: postgres
+#       POSTGRES_PASSWORD: postgres
+#       POSTGRES_DB: portfolio_db
+#     ports:
+#       - "5432:5432"
+#     volumes:
+#       - postgres_data:/var/lib/postgresql/data
+#     networks:
+#       - portfolio-network
+#     healthcheck:
+#       test: ["CMD-SHELL", "pg_isready -U postgres"]
+#       interval: 10s
+#       timeout: 5s
+#       retries: 5
+#     restart: unless-stopped
+
+#   rabbitmq:
+#     image: rabbitmq:4-management-alpine
+#     container_name: portfolio-rabbitmq
+#     environment:
+#       RABBITMQ_DEFAULT_USER: guest
+#       RABBITMQ_DEFAULT_PASS: guest
+#     ports:
+#       - "5672:5672"
+#       - "15672:15672"
+#     volumes:
+#       - rabbitmq_data:/var/lib/rabbitmq
+#     networks:
+#       - portfolio-network
+#     healthcheck:
+#       test: ["CMD", "rabbitmq-diagnostics", "ping"]
+#       interval: 30s
+#       timeout: 10s
+#       retries: 5
+#     restart: unless-stopped
+
+#   # Kafka using Confluent image (already downloaded successfully)
+#   kafka:
+#     image: confluentinc/cp-kafka:7.5.0
+#     container_name: portfolio-kafka
+#     environment:
+#       KAFKA_NODE_ID: 1
+#       KAFKA_PROCESS_ROLES: broker,controller
+#       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+#       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+#       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+#       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+#       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+#       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+#       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+#       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+#       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+#       KAFKA_LOG_RETENTION_HOURS: 168
+#       KAFKA_LOG_SEGMENT_BYTES: 1073741824
+#       CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+#     ports:
+#       - "9092:9092"
+#     volumes:
+#       - kafka_data:/var/lib/kafka/data
+#     networks:
+#       - portfolio-network
+#     healthcheck:
+#       test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+#       interval: 30s
+#       timeout: 10s
+#       retries: 5
+#     restart: unless-stopped
+
+#   redis:
+#     image: redis:7-alpine
+#     container_name: portfolio-redis
+#     command: redis-server --appendonly yes
+#     ports:
+#       - "6379:6379"
+#     volumes:
+#       - redis_data:/data
+#     networks:
+#       - portfolio-network
+#     healthcheck:
+#       test: ["CMD", "redis-cli", "ping"]
+#       interval: 10s
+#       timeout: 5s
+#       retries: 5
+#     restart: unless-stopped
+
+#   api-gateway:
+#     build:
+#       context: ./api-gateway
+#       dockerfile: Dockerfile
+#     container_name: portfolio-api-gateway
+#     ports:
+#       - "80:80"
+#     depends_on:
+#       - auth-service
+#     networks:
+#       - portfolio-network
+#     restart: unless-stopped
+
+#   auth-service:
+#     build:
+#       context: ./services/auth-service
+#       dockerfile: Dockerfile
+#     container_name: portfolio-auth-service
+#     environment:
+#       - ASPNETCORE_ENVIRONMENT=Development
+#       - ASPNETCORE_URLS=http://+:8080
+#       - DATABASE_URL=Host=postgres;Port=5432;Database=portfolio_db;Username=postgres;Password=postgres;
+#       - RABBITMQ_HOST=rabbitmq
+#       - RABBITMQ_PORT=5672
+#       - RABBITMQ_USER=guest
+#       - RABBITMQ_PASSWORD=guest
+#       - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+#       - REDIS_CONNECTION=redis:6379
+#     ports:
+#       - "5000:8080"
+#     depends_on:
+#       postgres:
+#         condition: service_healthy
+#       rabbitmq:
+#         condition: service_healthy
+#       redis:
+#         condition: service_healthy
+#       kafka:
+#         condition: service_started
+#     networks:
+#       - portfolio-network
+#     restart: unless-stopped
+
+# volumes:
+#   postgres_data:
+#     driver: local
+#   rabbitmq_data:
+#     driver: local
+#   kafka_data:
+#     driver: local
+#   redis_data:
+#     driver: local
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+networks:
+  portfolio-network:
+    driver: bridge
+
+services:
+  api-gateway:
+    build:
+      context: ./api-gateway
+      dockerfile: Dockerfile
+    container_name: portfolio-api-gateway
+    ports:
+      - "80:80"
+    depends_on:
+      - auth-service
+    networks:
+      - portfolio-network
+    restart: unless-stopped
+
+  auth-service:
+    build:
+      context: ./services/auth-service
+      dockerfile: Dockerfile
+    container_name: portfolio-auth-service
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://+:8080
+      - DATABASE_URL=${DATABASE_URL}
+      - RABBITMQ_HOST=${RABBITMQ_HOST}
+      - RABBITMQ_PORT=${RABBITMQ_PORT}
+      - RABBITMQ_USER=${RABBITMQ_USER}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
+      - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS}
+      - REDIS_CONNECTION=${REDIS_CONNECTION}
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_ISSUER=${JWT_ISSUER}
+      - JWT_AUDIENCE=${JWT_AUDIENCE}
+      - JWT_EXPIRY_MINUTES=${JWT_EXPIRY_MINUTES}
+      - ADMIN_MASTER_KEY=${ADMIN_MASTER_KEY}
+      - ADMIN_KEY_REQUIRE_FOR_REGISTRATION=${ADMIN_KEY_REQUIRE_FOR_REGISTRATION}
+      - ADMIN_ALLOWED_KEYS=${ADMIN_ALLOWED_KEYS}
+      - CLOUDINARY_CLOUD_NAME=${CLOUDINARY_CLOUD_NAME}
+      - CLOUDINARY_API_KEY=${CLOUDINARY_API_KEY}
+      - CLOUDINARY_API_SECRET=${CLOUDINARY_API_SECRET}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
+      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
+    ports:
+      - "8080:8080"
+    networks:
+      - portfolio-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  rabbitmq_data:
+  kafka_data:
+  redis_data:

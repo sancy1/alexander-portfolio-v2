@@ -1,0 +1,20 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "UserProfileUpdatedEvent",
+  "description": "Emitted when a user completes or updates their profile",
+  "type": "object",
+  "allOf": [{ "$ref": "../common/event-base.json" }],
+  "properties": {
+    "eventType": { "const": "user.profile.updated" },
+    "data": {
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "format": "uuid" },
+        "displayName": { "type": "string" },
+        "avatarUrl": { "type": "string", "format": "uri" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId"]
+    }
+  }
+}

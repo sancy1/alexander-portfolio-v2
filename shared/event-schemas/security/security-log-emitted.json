@@ -1,0 +1,38 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SecurityLogEmittedEvent",
+  "description": "Emitted for security-related events (failed logins, suspicious activity)",
+  "type": "object",
+  "allOf": [{ "$ref": "../common/event-base.json" }],
+  "properties": {
+    "eventType": { "const": "security.log.emitted" },
+    "data": {
+      "type": "object",
+      "properties": {
+        "securityEventType": {
+          "type": "string",
+          "enum": [
+            "failed_login",
+            "suspicious_activity",
+            "brute_force_detected",
+            "invalid_admin_key",
+            "password_reset_requested",
+            "account_locked",
+            "token_revoked"
+          ]
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["Low", "Medium", "High", "Critical"]
+        },
+        "ipAddress": { "type": "string" },
+        "userAgent": { "type": "string" },
+        "affectedUserId": { "type": "string", "format": "uuid" },
+        "affectedAdminId": { "type": "string", "format": "uuid" },
+        "details": { "type": "string" },
+        "attemptCount": { "type": "integer" }
+      },
+      "required": ["securityEventType", "severity"]
+    }
+  }
+}

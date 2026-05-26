@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AdminCreatedEvent",
+  "description": "Emitted when a new admin account is created",
+  "type": "object",
+  "allOf": [{ "$ref": "../common/event-base.json" }],
+  "properties": {
+    "eventType": { "const": "admin.created" },
+    "data": {
+      "type": "object",
+      "properties": {
+        "adminId": { "type": "string", "format": "uuid" },
+        "username": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "role": { "type": "string", "enum": ["Admin", "SuperAdmin"] },
+        "createdBy": { "type": "string", "description": "Who created this admin (system or another admin)" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["adminId", "username", "email", "role"]
+    }
+  }
+}

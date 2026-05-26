@@ -1,0 +1,78 @@
+services:
+  - type: web
+    name: api-gateway
+    runtime: image
+    repo: https://github.com/sancy1/alexander-portfolio-v2
+    branch: main
+    dockerfilePath: ./api-gateway/Dockerfile
+    dockerContext: ./api-gateway
+    envVars:
+      - key: AUTH_SERVICE_URL
+        fromService:
+          name: auth-service
+          type: web
+          property: host
+
+  - type: web
+    name: auth-service
+    runtime: image
+    repo: https://github.com/sancy1/alexander-portfolio-v2
+    branch: main
+    dockerfilePath: ./services/auth-service/Dockerfile
+    dockerContext: ./services/auth-service
+    envVars:
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_ISSUER
+        value: auth-service
+      - key: JWT_AUDIENCE
+        value: portfolio-api
+      - key: JWT_EXPIRY_MINUTES
+        value: 360
+      - key: ADMIN_MASTER_KEY
+        sync: false
+      - key: ADMIN_KEY_REQUIRE_FOR_REGISTRATION
+        value: true
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GITHUB_CLIENT_ID
+        sync: false
+      - key: GITHUB_CLIENT_SECRET
+        sync: false
+
+  # Future services (commented until ready)
+  # - type: web
+  #   name: blog-service
+  #   runtime: image
+  #   repo: https://github.com/sancy1/alexander-portfolio-v2
+  #   branch: main
+  #   dockerfilePath: ./services/blog-service/Dockerfile
+  #   dockerContext: ./services/blog-service
+
+  # - type: web
+  #   name: ai-service
+  #   runtime: image
+  #   repo: https://github.com/sancy1/alexander-portfolio-v2
+  #   branch: main
+  #   dockerfilePath: ./services/ai-service/Dockerfile
+  #   dockerContext: ./services/ai-service
+
+  # - type: web
+  #   name: core-info-service
+  #   runtime: image
+  #   repo: https://github.com/sancy1/alexander-portfolio-v2
+  #   branch: main
+  #   dockerfilePath: ./services/core-info-service/Dockerfile
+  #   dockerContext: ./services/core-info-service

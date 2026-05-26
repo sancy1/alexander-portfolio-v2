@@ -1,0 +1,21 @@
+{
+  "name": "alexander-portfolio-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "nx": "nx",
+    "build:all": "nx run-many --target=build --all",
+    "build:affected": "nx affected --target=build",
+    "test:all": "nx run-many --target=test --all",
+    "test:affected": "nx affected --target=test",
+    "docker:build:all": "nx run-many --target=docker-build --all",
+    "docker:build:affected": "nx affected --target=docker-build",
+    "docker:push:affected": "nx affected --target=docker-push"
+  },
+  "devDependencies": {
+    "nx": "19.0.0"
+  },
+  "dependencies": {
+    "jsonwebtoken": "^9.0.3"
+  }
+}

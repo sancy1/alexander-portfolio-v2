@@ -1,0 +1,114 @@
+Resend, Brevo, or SendGrid.
+
+Alternative: Using the Gmail API (If you really want to keep using your existing Gmail address)If you specifically want your emails to come from your personal or custom @gmail.com address, you can transition from SMTP to the Gmail API.How it works: It uses an HTTP POST request with an OAuth2 token instead of a traditional SMTP connection, thus avoiding the port block.Setup: You will need to create a project in the Google Cloud Console, enable the Gmail API, generate credentials (Client ID and Secret), and use Google's OAuth Playground to get a Refresh Token.Implementation: You pass these OAuth tokens directly into libraries like Nodemailer so it authenticates via HTTP rather than standard SMTP.
+
+         Yes, it is entirely possible to send emails programmatically from your hello@cyril.com domain using Gmail infrastructure for your Render project. However, you will need to map out how you connect the three pieces of your stack: Render (as the host), Gmail/Google Workspace (as the email carrier), and @cyril.com (as your private domain).Depending on your exact needs, here are the most effective ways to make it work:Option 1: Use a Third-Party SMTP Relay (Recommended)This is the most reliable method for hosted apps like Render. Cloud hosting platforms often restrict outbound SMTP traffic to prevent spam. Instead of connecting directly to Gmail, you can use a dedicated transactional email service (like SendGrid or Mailgun). You will verify your cyril.com domain with them, use their SMTP credentials in your Render app, and configure their DNS settings so your emails look like they come directly from cyril.com.Option 2: Programmatic Gmail API with OAuth2If you want to use your actual Google account to send emails from cyril.com, you should not use basic SMTP authentication (which requires less secure apps and App Passwords). Instead, use the official Google APIs.Prerequisite: Ensure cyril.com is set up as an alias in your Gmail account.Setup: Use the Google Cloud Console to create a project and enable the Gmail API.Authentication: Implement OAuth2. Your Render application will prompt for initial user consent, store the generated refresh token, and use it to programmatically request short-lived access tokens to send emails on your behalf.Sending: When using the Gmail API, ensure the from header contains your cyril.com alias.
+
+
+-------------------------------------------------------------------------------------------
+
+USER ACCOUNT MANAGEMENT
+-----------------------
+I want to build a user application that consist of two major parts/Sections: 1. Social account this is google and GitHub social account user can login or create account, or edit their info like names during account creation 2.  The section two is admin account the admin account has a regular user management tyle by requesting user for user name, email, password and admin key that grant access to users to create admin account. same with admin account recover, password change, password reset, login and logout. The interesting part of this App is that i am building a microservices and i need to broadcast my endpoints using message broadcaster like RabitMQ and Kaifa. i want you to break it down on how i would build this kind of app. remember the non admin user account is limited to social account alone but must have create account with social if user hasn't before created account they can not login otherwise the app direct them to signup first then login subsequently
+
+To build this microservices-based identity architecture, you need to separate your concerns into a User (Social) Service, an Admin Service, and an API Gateway. Here is the structural breakdown of how to build this application. Architectural Blueprint
+
+[ User Browser / Client ]
+           │
+           ▼
+    [ API Gateway ] (Routes requests / Validates JWTs)
+           │
+      ┌────┴────────────────────────┐
+      ▼                             ▼
+[ User Service ]              [ Admin Service ]
+ (Social Auth Only)            (Password Auth + Admin Key)
+      │                             │
+      └──────┬───────────────┬──────┘
+             ▼               ▼
+        [ RabbitMQ ]    [ Kafka ]
+      (Async Events)  (Audit/Logs)
+
+1. Service BreakdownUser Service (Social Authentication Only)This service handles regular users. It strictly prohibits traditional password registration.OAuth2 Flow: Implement Google and GitHub OAuth strategies.Sign-Up Enforcement:User clicks "Login with Google".Service checks your database for the Google Provider ID.If not found: Halt the process. Redirect the user to a /signup-profile screen.Allow them to edit details (e.g., display name) on this screen, then click "Complete Registration" to save them to the database.If found: Issue a JWT access token and log them in.Admin Service (Credential Authentication)This service operates on a completely separate database or schema to isolate high-privilege credentials.Registration: Requires Username, Email, Password, and a hardcoded or database-backed ADMIN_SECRET_KEY. If the key is invalid, reject the registration.Account Recovery: Uses a time-sensitive, randomized token sent via email for password resets.Session Management: Handles traditional login, logout, and password updates.API GatewayActs as the single entry point for your frontend.Proxies requests to /api/v1/users/* to the User Service.Proxies requests to /api/v1/admins/* to the Admin Service.Validates user and admin JWT tokens before passing requests downstream.2. Message Broker Strategy (RabbitMQ vs. Kafka)Using both brokers is an excellent production pattern if you split their responsibilities based on their strengths.Use RabbitMQ for Command & Event OrchestrationRabbitMQ is ideal for targeted, fast, transactional messages between services.Scenario: A new admin updates a user's status.Action: Admin Service publishes a user.switched_status message to a RabbitMQ exchange. 
+
+The User Service listens to this queue and updates its local records instantly.Use Kafka for Audit Logging & AnalyticsKafka excels at handling massive, immutable streams of data that need to be replayed or analyzed.Scenario: Tracking security events (Logins, Failed Admin attempts, Password resets).Action: Both services stream event logs to a Kafka topic named security-audit-log. A separate analytics or logging service consumes this data later.3. Step-by-Step Development RoadmapStep 1: Database Design: Create your schemas. Ensure your User schema has fields for google_id, github_id, and a boolean is_profile_complete. 
+
+Your Admin schema needs hashed password fields and privilege levels.Step 2: Build the Admin Service: Implement standard registration (with the admin key check) and login using JWT.Step 3: Build the User Service: Set up passport.js or native OAuth handlers. Write the redirection logic that blocks authentication if is_profile_complete is false.Step 4: Integrate RabbitMQ: Set up a local Docker container for RabbitMQ. Practice emitting a message from the Admin service when a user is modified, and catching it in the User service.Step 5: Deploy to Render: Deploy each service as a separate Render Web Service, and use Render's private networking to let them talk to your brokers safely.To give you the most specific guidance, what programming language or framework (e.g., Node.js/Express, Python/FastAPI, Go) are you planning to use to write these microservices?
+
+Architectural Recommendations & Framework Adjustments 
+-----------------------------------------------------
+Before looking at the folder structure, here is a professional critique of your framework choices to ensure your portfolio runs efficiently, costs less to host, and is easy to maintain.1. Replace Flask with Go (Golang) or Node.js (Express)While Flask works well, using it alongside FastAPI means you are running two separate Python runtimes. This will double your hosting costs on platforms like Render.The Fix: Move the contact, email subscription, and project data into your C# Web API or a lightweight Node.js/Express app.Why: C# can easily handle database CRUD (projects/resume) and email sending via SMTP. Eliminating Flask entirely reduces your microservice count from 4 to 3, saving you money and deployment complexity.2. The API Gateway EssentialBecause React cannot easily manage four different backend URLs without hitting Cross-Origin Resource Sharing (CORS) issues, you need an API Gateway. A simple NGINX configuration or a lightweight Node.js Gateway acts as the single entry point. React talks only to the Gateway, and the Gateway routes the requests internally.Project Repository Tree (alexander-portfolio-v2)Here is how to structure this system using a Monorepo pattern. All services live inside one parent folder, making it clean to develop locally using Docker.
+
+alexander-portfolio-v2/
+├── .github/                       # CI/CD workflows (GitHub Actions)
+├── docker-compose.yml             # Local orchestrator for all services, RabbitMQ, & Kafka
+├── README.md                      # Global setup documentation
+│
+├── api-gateway/                   # Single entrypoint for the React frontend
+│   ├── nginx.conf                 # Routes /api/v1/auth -> C#, /api/v1/blog -> Ruby, etc.
+│   └── Dockerfile
+│
+├── frontend-client/               # React + Vite Application
+│   ├── src/
+│   │   ├── components/
+│   │   ├── pages/
+│   │   ├── hooks/                 # Custom hooks for consuming the API Gateway
+│   │   └── App.jsx
+│   ├── package.json
+│   └── Vite.config.js
+│
+├── services/                      # BACKEND MICROSERVICES
+│   │
+│   ├── auth-service/              # 1. C# Web API (User & Admin Accounts)
+│   │   ├── Controllers/
+│   │   ├── Models/
+│   │   ├── Messaging/             # RabbitMQ Publisher / Subscriber logic
+│   │   ├── Program.cs
+│   │   └── auth-service.csproj
+│   │
+│   ├── blog-service/              # 2. Ruby on Rails (Complete Blog Engine)
+│   │   ├── app/
+│   │   │   ├── controllers/
+│   │   │   └── models/
+│   │   ├── config/
+│   │   ├── db/
+│   │   └── Gemfile
+│   │
+│   ├── ai-service/                # 3. FastAPI (AI Agent Capabilities)
+│   │   ├── app/
+│   │   │   ├── main.py
+│   │   │   ├── agent.py           # LLM / LangChain logic
+│   │   │   └── config.py
+│   │   └── requirements.txt
+│   │
+│   └── core-info-service/         # 4. Flask (Or C# if you merge them)
+│       ├── app/                   # Handles Resume, Contact, Projects, Subscriptions
+│       │   ├── routes.py
+│       │   └── models.py
+│       └── requirements.txt
+│
+└── shared/                        # Shared configurations or message schemas
+    └── event-schemas/             # Documentation of RabbitMQ/Kafka event payloads
+
+Use code with caution.Local Network FlowWhen running locally via the docker-compose.yml file:Your React App runs on http://localhost:5173.All API calls from React go to the Gateway at http://localhost:8080/api/v1/....The Gateway securely pushes the request to the correct internal service container over a private network.
+
+Updated Architecture Tree with Golang (core-info-service)
+----------------------------------------------------------
+alexander-portfolio-v2/
+├── frontend-client/               # React + Vite
+├── api-gateway/                   # NGINX Routing Gateway
+└── services/
+    ├── auth-service/              # 1. C# Web API (Identity)
+    ├── blog-service/              # 2. Ruby on Rails (Content)
+    ├── ai-service/                # 3. FastAPI (AI Agents)
+    └── core-info-service/         # 4. GOLANG (Gin/Fiber) <--- NEW 
+        ├── cmd/
+        │   └── main.go            # App entry point
+        ├── internal/
+        │   ├── handlers/          # Contact & Subscription route handlers
+        │   ├── repository/        # SQL / Mongo Project data access
+        │   └── queue/             # RabbitMQ/Kafka Broadcaster setup
+        ├── go.mod
+        └── go.sum
+
+
+

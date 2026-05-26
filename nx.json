@@ -1,0 +1,42 @@
+{
+  "extends": "nx/presets/npm.json",
+  "tasksRunnerOptions": {
+    "default": {
+      "runner": "nx/tasks-runners/default",
+      "options": {
+        "cacheableOperations": [
+          "build",
+          "test",
+          "lint",
+          "docker-build"
+        ]
+      }
+    }
+  },
+  "workspaceLayout": {
+    "appsDir": "services",
+    "libsDir": "shared"
+  },
+  "targetDefaults": {
+    "docker-build": {
+      "dependsOn": [
+        "^docker-build"
+      ],
+      "cache": true,
+      "inputs": [
+        "{projectRoot}/**/*"
+      ]
+    }
+  },
+  "namedInputs": {
+    "default": [
+      "{projectRoot}/**/*"
+    ],
+    "production": [
+      "!{projectRoot}/**/*.spec.ts",
+      "!{projectRoot}/**/*.test.ts",
+      "!{projectRoot}/**/tests/**"
+    ]
+  },
+  "analytics": true
+}

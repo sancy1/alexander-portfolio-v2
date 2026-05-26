@@ -376,12 +376,28 @@ using (var scope = app.Services.CreateScope())
 
 
 // Configure pipeline
+// Always enable Swagger (including production)
 app.UseSwagger();
 app.UseSwaggerUI(c =>
 {
-    c.SwaggerEndpoint("/swagger/v1/swagger.json", "AuthService API v1");
+    c.SwaggerEndpoint("/swagger/v1/swagger.json", "Auth Service API v1");
     c.RoutePrefix = "swagger";
 });
+
+// Optional: Add security for Swagger in production
+if (!app.Environment.IsDevelopment())
+{
+    // You can add basic auth or disable completely if concerned
+    // For now, let's keep it accessible for testing
+}
+
+// app.UseSwagger();
+// app.UseSwaggerUI(c =>
+// {
+//     c.SwaggerEndpoint("/swagger/v1/swagger.json", "AuthService API v1");
+//     c.RoutePrefix = "swagger";
+// });
+
 
 app.UseHttpsRedirection();
 app.UseCors("AllowAll");

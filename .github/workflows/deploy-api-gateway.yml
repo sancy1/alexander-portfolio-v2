@@ -142,7 +142,6 @@
 
 
 
-
 name: Deploy API Gateway
 
 on:
@@ -188,7 +187,7 @@ jobs:
       - name: Deploy to Render
         run: |
           curl -X POST \
-            https://api.render.com/deploy/srv-${{ secrets.RENDER_GATEWAY_SERVICE_ID }} \
+            https://api.render.com/v1/services/${{ secrets.RENDER_GATEWAY_SERVICE_ID }}/deploys \
             -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
             -H "Content-Type: application/json" \
             -d '{"imageUrl":"${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"}' \

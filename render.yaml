@@ -11,6 +11,11 @@ services:
         fromService:
           name: auth-service
           type: web
+          property: hostport
+      - key: AUTH_SERVICE_HOST
+        fromService:
+          name: auth-service
+          type: web
           property: host
 
   - type: web
@@ -52,27 +57,3 @@ services:
       - key: GITHUB_CLIENT_SECRET
         sync: false
 
-  # Future services (commented until ready)
-  # - type: web
-  #   name: blog-service
-  #   runtime: image
-  #   repo: https://github.com/sancy1/alexander-portfolio-v2
-  #   branch: main
-  #   dockerfilePath: ./services/blog-service/Dockerfile
-  #   dockerContext: ./services/blog-service
-
-  # - type: web
-  #   name: ai-service
-  #   runtime: image
-  #   repo: https://github.com/sancy1/alexander-portfolio-v2
-  #   branch: main
-  #   dockerfilePath: ./services/ai-service/Dockerfile
-  #   dockerContext: ./services/ai-service
-
-  # - type: web
-  #   name: core-info-service
-  #   runtime: image
-  #   repo: https://github.com/sancy1/alexander-portfolio-v2
-  #   branch: main
-  #   dockerfilePath: ./services/core-info-service/Dockerfile
-  #   dockerContext: ./services/core-info-service

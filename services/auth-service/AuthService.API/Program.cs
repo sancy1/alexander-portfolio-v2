@@ -297,12 +297,51 @@ builder.Services.AddCors(options =>
 // REDIS CACHE SETUP (For Token Blacklisting & Rate Limiting)
 // ============================================================================
 
-// Register Redis distributed cache
+// ============================================================================
+// REDIS CACHE SETUP
+// ============================================================================
+var redisConnection = Environment.GetEnvironmentVariable("REDIS_CONNECTION");
+var redisHost = Environment.GetEnvironmentVariable("REDIS_HOST");
+var redisPort = Environment.GetEnvironmentVariable("REDIS_PORT") ?? "23851";
+var redisPassword = Environment.GetEnvironmentVariable("REDIS_PASSWORD");
+var redisUser = Environment.GetEnvironmentVariable("REDIS_USER") ?? "default";
+
+// Build StackExchange-compatible connection string from parts
+// (StackExchangeRedisCache doesn't parse rediss:// URL format natively)
+string redisConfigString;
+if (!string.IsNullOrEmpty(redisHost) && !string.IsNullOrEmpty(redisPassword))
+{
+    redisConfigString = $"{redisHost}:{redisPort},password={redisPassword},ssl=True,abortConnect=False,connectTimeout=10000,syncTimeout=10000";
+    Console.WriteLine($"Redis configured via host parts: {redisHost}:{redisPort}");
+}
+else if (!string.IsNullOrEmpty(redisConnection))
+{
+    // Fallback: try to parse rediss:// URL manually
+    var uri = new Uri(redisConnection);
+    var host = uri.Host;
+    var port = uri.Port;
+    var password = Uri.UnescapeDataString(uri.UserInfo.Split(':').Last());
+    redisConfigString = $"{host}:{port},password={password},ssl=True,abortConnect=False,connectTimeout=10000,syncTimeout=10000";
+    Console.WriteLine($"Redis configured via URL parsing: {host}:{port}");
+}
+else
+{
+    redisConfigString = "localhost:6379,abortConnect=False";
+    Console.WriteLine("WARNING: Redis not configured, using localhost fallback");
+}
+
 builder.Services.AddStackExchangeRedisCache(options =>
 {
-    options.Configuration = Environment.GetEnvironmentVariable("REDIS_CONNECTION") ?? "localhost:6379";
+    options.Configuration = redisConfigString;
     options.InstanceName = "AuthService_";
 });
+
+// // Register Redis distributed cache
+// builder.Services.AddStackExchangeRedisCache(options =>
+// {
+//     options.Configuration = Environment.GetEnvironmentVariable("REDIS_CONNECTION") ?? "localhost:6379";
+//     options.InstanceName = "AuthService_";
+// });
 
 
 // ============================================================================

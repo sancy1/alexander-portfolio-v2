@@ -1,14 +1,14 @@
 FROM nginx:alpine
 
-# Install gettext for envsubst command
-RUN apk add --no-cache gettext
+# Install gettext for envsubst, and dos2unix for line ending safety
+RUN apk add --no-cache gettext dos2unix
 
 # Copy nginx configuration template
 COPY nginx.conf /etc/nginx/nginx.conf.template
 
-# Copy entrypoint script
+# Copy entrypoint script and fix line endings explicitly
 COPY docker-entrypoint.sh /docker-entrypoint.sh
-RUN chmod +x /docker-entrypoint.sh
+RUN dos2unix /docker-entrypoint.sh && chmod +x /docker-entrypoint.sh
 
 EXPOSE 80
 

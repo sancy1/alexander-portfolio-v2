@@ -1,0 +1,4 @@
+# Prevent Windows CRLF from breaking Linux shell scripts in Docker
+*.sh        text eol=lf
+*.conf      text eol=lf
+Dockerfile  text eol=lf

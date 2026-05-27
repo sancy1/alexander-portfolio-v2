@@ -1,121 +1,20 @@
-
-
-# services:
-#   # API Gateway - PUBLIC facing (stays as web service)
-#   - type: web
-#     name: api-gateway
-#     runtime: image
-#     repo: https://github.com/sancy1/alexander-portfolio-v2
-#     branch: main
-#     dockerfilePath: ./api-gateway/Dockerfile
-#     dockerContext: ./api-gateway
-#     envVars:
-#       - key: AUTH_SERVICE_HOST
-#         fromService:
-#           name: auth-service
-#           type: pserv                    # ← PRIVATE service type
-#           property: host
-#       - key: AUTH_SERVICE_PORT
-#         fromService:
-#           name: auth-service
-#           type: pserv                    # ← PRIVATE service type
-#           property: port
-
-#   # Auth Service - PRIVATE (not directly accessible from internet)
-#   - type: pserv                          # ← Changed from "web" to "pserv"
-#     name: auth-service
-#     runtime: image
-#     repo: https://github.com/sancy1/alexander-portfolio-v2
-#     branch: main
-#     dockerfilePath: ./services/auth-service/Dockerfile
-#     dockerContext: ./services/auth-service
-#     envVars:
-#       - key: ASPNETCORE_ENVIRONMENT
-#         value: Production
-#       - key: DATABASE_URL
-#         sync: false
-#       - key: JWT_SECRET
-#         generateValue: true
-#       - key: JWT_ISSUER
-#         value: auth-service
-#       - key: JWT_AUDIENCE
-#         value: portfolio-api
-#       - key: JWT_EXPIRY_MINUTES
-#         value: 360
-#       - key: ADMIN_MASTER_KEY
-#         sync: false
-#       - key: ADMIN_KEY_REQUIRE_FOR_REGISTRATION
-#         value: true
-#       - key: CLOUDINARY_CLOUD_NAME
-#         sync: false
-#       - key: CLOUDINARY_API_KEY
-#         sync: false
-#       - key: CLOUDINARY_API_SECRET
-#         sync: false
-#       - key: GOOGLE_CLIENT_ID
-#         sync: false
-#       - key: GOOGLE_CLIENT_SECRET
-#         sync: false
-#       - key: GITHUB_CLIENT_ID
-#         sync: false
-#       - key: GITHUB_CLIENT_SECRET
-#         sync: false
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 services:
-  # API Gateway - PUBLIC facing (stays as web service)
   - type: web
     name: api-gateway
-    runtime: docker              # ← Changed from "image" to "docker"
+    runtime: docker
     repo: https://github.com/sancy1/alexander-portfolio-v2
     branch: main
     dockerfilePath: ./api-gateway/Dockerfile
     dockerContext: ./api-gateway
     envVars:
       - key: AUTH_SERVICE_HOST
-        fromService:
-          name: auth-service
-          type: pserv
-          property: host
-      - key: AUTH_SERVICE_PORT
-        fromService:
-          name: auth-service
-          type: pserv
-          property: port
+        value: alexander-portfolio-authservice.onrender.com
+      - key: GATEWAY_SECRET
+        generateValue: true   # Render auto-generates a strong random string
 
-  # Auth Service - PRIVATE (not directly accessible from internet)
-  - type: pserv
+  - type: web
     name: auth-service
-    runtime: docker              # ← Changed from "image" to "docker"
+    runtime: docker
     repo: https://github.com/sancy1/alexander-portfolio-v2
     branch: main
     dockerfilePath: ./services/auth-service/Dockerfile
@@ -137,6 +36,8 @@ services:
         sync: false
       - key: ADMIN_KEY_REQUIRE_FOR_REGISTRATION
         value: true
+      - key: GATEWAY_SECRET
+        sync: false           # You manually paste same value from api-gateway's env
       - key: CLOUDINARY_CLOUD_NAME
         sync: false
       - key: CLOUDINARY_API_KEY

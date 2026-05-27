@@ -405,6 +405,7 @@ app.UseHttpsRedirection();
 app.UseCors("AllowAll");
 
 // IMPORTANT: Authentication MUST come before Authorization
+app.UseMiddleware<GatewaySecretMiddleware>(); 
 app.UseAuthentication();
 app.UseMiddleware<JwtBlacklistMiddleware>();
 app.UseAuthorization();

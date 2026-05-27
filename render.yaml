@@ -1,9 +1,10 @@
 
+
 # services:
 #   # API Gateway - PUBLIC facing (stays as web service)
 #   - type: web
 #     name: api-gateway
-#     runtime: docker              # ← Changed from "image" to "docker"
+#     runtime: image
 #     repo: https://github.com/sancy1/alexander-portfolio-v2
 #     branch: main
 #     dockerfilePath: ./api-gateway/Dockerfile
@@ -12,18 +13,18 @@
 #       - key: AUTH_SERVICE_HOST
 #         fromService:
 #           name: auth-service
-#           type: pserv
+#           type: pserv                    # ← PRIVATE service type
 #           property: host
 #       - key: AUTH_SERVICE_PORT
 #         fromService:
 #           name: auth-service
-#           type: pserv
+#           type: pserv                    # ← PRIVATE service type
 #           property: port
 
 #   # Auth Service - PRIVATE (not directly accessible from internet)
-#   - type: pserv
+#   - type: pserv                          # ← Changed from "web" to "pserv"
 #     name: auth-service
-#     runtime: docker              # ← Changed from "image" to "docker"
+#     runtime: image
 #     repo: https://github.com/sancy1/alexander-portfolio-v2
 #     branch: main
 #     dockerfilePath: ./services/auth-service/Dockerfile
@@ -88,21 +89,33 @@
 
 
 
+
+
 services:
+  # API Gateway - PUBLIC facing (stays as web service)
   - type: web
     name: api-gateway
-    runtime: image
+    runtime: docker              # ← Changed from "image" to "docker"
     repo: https://github.com/sancy1/alexander-portfolio-v2
     branch: main
     dockerfilePath: ./api-gateway/Dockerfile
     dockerContext: ./api-gateway
     envVars:
       - key: AUTH_SERVICE_HOST
-        value: alexander-portfolio-authservice.onrender.com
+        fromService:
+          name: auth-service
+          type: pserv
+          property: host
+      - key: AUTH_SERVICE_PORT
+        fromService:
+          name: auth-service
+          type: pserv
+          property: port
 
-  - type: web
+  # Auth Service - PRIVATE (not directly accessible from internet)
+  - type: pserv
     name: auth-service
-    runtime: image
+    runtime: docker              # ← Changed from "image" to "docker"
     repo: https://github.com/sancy1/alexander-portfolio-v2
     branch: main
     dockerfilePath: ./services/auth-service/Dockerfile

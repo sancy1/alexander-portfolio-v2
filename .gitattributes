@@ -1,7 +1,0 @@
-# Force LF for all shell scripts - prevents Windows CRLF breaking Linux containers
-*.sh text eol=lf
-
-# Also force LF for these common config files
-*.conf text eol=lf
-Dockerfile text eol=lf
-docker-entrypoint* text eol=lf

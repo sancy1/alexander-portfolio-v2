@@ -1,7 +1,4 @@
 // File: AuthService.API/Middleware/GatewaySecretMiddleware.cs
-// Purpose: Blocks any request that didn't come through the API gateway
-// Layer: API
-
 namespace AuthService.API.Middleware;
 
 public class GatewaySecretMiddleware
@@ -10,13 +7,10 @@ public class GatewaySecretMiddleware
     private readonly string _gatewaySecret;
     private readonly ILogger<GatewaySecretMiddleware> _logger;
 
-    // These paths bypass the check entirely (health checks need to work
-    // for Render's own infrastructure monitoring)
     private static readonly string[] BypassPaths =
     [
-        "/health/ready",
-        "/health/live",
-        "/health"
+        "/health",
+        "/api/v1/health"
     ];
 
     public GatewaySecretMiddleware(
@@ -34,21 +28,20 @@ public class GatewaySecretMiddleware
         {
             _logger.LogWarning(
                 "GATEWAY_SECRET is not configured. " +
-                "All requests will be allowed through. " +
-                "Set GATEWAY_SECRET in production!");
+                "All requests will be allowed through.");
         }
     }
 
     public async Task InvokeAsync(HttpContext context)
     {
-        // Skip check if secret not configured (dev environment safety net)
+        // Skip check if secret not configured
         if (string.IsNullOrEmpty(_gatewaySecret))
         {
             await _next(context);
             return;
         }
 
-        // Skip check for health check paths (Render needs these)
+        // Skip check for all health paths (Render's health checker has no secret)
         var path = context.Request.Path.Value ?? string.Empty;
         if (BypassPaths.Any(p => path.StartsWith(p, StringComparison.OrdinalIgnoreCase)))
         {
@@ -56,7 +49,7 @@ public class GatewaySecretMiddleware
             return;
         }
 
-        // Check for gateway secret header
+        // Check gateway secret
         var providedSecret = context.Request.Headers["X-Gateway-Secret"].FirstOrDefault();
 
         if (string.IsNullOrEmpty(providedSecret) ||

@@ -317,46 +317,23 @@ builder.Services.AddCors(options =>
 
 
 // ============================================================================
-// REDIS CACHE SETUP (For Token Blacklisting & Rate Limiting)
+// REDIS CACHE SETUP (Render Internal Redis)
 // ============================================================================
+var redisConnection = Environment.GetEnvironmentVariable("REDIS_CONNECTION");
 
-// ============================================================================
-// REDIS CACHE SETUP (Aiven Redis with SSL)
-// ============================================================================
-var redisHost = Environment.GetEnvironmentVariable("REDIS_HOST");
-var redisPort = int.Parse(Environment.GetEnvironmentVariable("REDIS_PORT") ?? "23851");
-var redisPassword = Environment.GetEnvironmentVariable("REDIS_PASSWORD");
-
-Console.WriteLine(string.IsNullOrEmpty(redisHost)
-    ? "WARNING: REDIS_HOST not set. Token blacklisting will not work."
-    : $"Redis configured: {redisHost}:{redisPort}");
+if (string.IsNullOrEmpty(redisConnection))
+{
+    Console.WriteLine("WARNING: REDIS_CONNECTION not set. Token blacklisting will not work.");
+    redisConnection = "localhost:6379,abortConnect=False";
+}
+else
+{
+    Console.WriteLine("Redis connection string loaded.");
+}
 
 builder.Services.AddStackExchangeRedisCache(options =>
 {
-    var configOptions = new StackExchange.Redis.ConfigurationOptions
-    {
-        AbortOnConnectFail = false,
-        ConnectTimeout = 15000,
-        SyncTimeout = 15000,
-        AsyncTimeout = 15000,
-        Ssl = true,
-        SslHost = redisHost,
-        Password = redisPassword,
-        User = "default",
-        ConnectRetry = 3,
-    };
-
-    configOptions.EndPoints.Add(redisHost ?? "localhost", redisPort);
-
-    // Aiven uses Let's Encrypt — accept valid certs
-    configOptions.CertificateValidation += (sender, cert, chain, errors) =>
-    {
-        if (errors == System.Net.Security.SslPolicyErrors.None) return true;
-        Console.WriteLine($"Redis SSL warning: {errors} - allowing Aiven Let's Encrypt cert");
-        return true;
-    };
-
-    options.ConfigurationOptions = configOptions;
+    options.Configuration = redisConnection;
     options.InstanceName = "AuthService_";
 });
 

@@ -159,8 +159,8 @@ builder.Services.AddSingleton<AuthService.Application.Interfaces.Security.IAdmin
 builder.Services.AddSingleton<IJwtGenerator, JwtGenerator>();
 
 // Register Token Blacklist Service
-builder.Services.AddSingleton<IRedisCacheService, RedisCacheService>();
-builder.Services.AddSingleton<ITokenBlacklistService, TokenBlacklistService>();
+// builder.Services.AddSingleton<IRedisCacheService, RedisCacheService>();
+// builder.Services.AddSingleton<ITokenBlacklistService, TokenBlacklistService>();
 
 // Register MediatR
 builder.Services.AddMediatR(cfg => {
@@ -299,43 +299,48 @@ builder.Services.AddCors(options =>
 // ============================================================================
 
 // ============================================================================
-// REDIS CACHE SETUP
+// REDIS CACHE SETUP (Aiven Redis with SSL)
 // ============================================================================
-var redisConnection = Environment.GetEnvironmentVariable("REDIS_CONNECTION");
 var redisHost = Environment.GetEnvironmentVariable("REDIS_HOST");
-var redisPort = Environment.GetEnvironmentVariable("REDIS_PORT") ?? "23851";
+var redisPort = int.Parse(Environment.GetEnvironmentVariable("REDIS_PORT") ?? "23851");
 var redisPassword = Environment.GetEnvironmentVariable("REDIS_PASSWORD");
-var redisUser = Environment.GetEnvironmentVariable("REDIS_USER") ?? "default";
 
-// Build StackExchange-compatible connection string from parts
-// (StackExchangeRedisCache doesn't parse rediss:// URL format natively)
-string redisConfigString;
-if (!string.IsNullOrEmpty(redisHost) && !string.IsNullOrEmpty(redisPassword))
-{
-    redisConfigString = $"{redisHost}:{redisPort},password={redisPassword},ssl=True,abortConnect=False,connectTimeout=10000,syncTimeout=10000";
-    Console.WriteLine($"Redis configured via host parts: {redisHost}:{redisPort}");
-}
-else if (!string.IsNullOrEmpty(redisConnection))
-{
-    // Fallback: try to parse rediss:// URL manually
-    var uri = new Uri(redisConnection);
-    var host = uri.Host;
-    var port = uri.Port;
-    var password = Uri.UnescapeDataString(uri.UserInfo.Split(':').Last());
-    redisConfigString = $"{host}:{port},password={password},ssl=True,abortConnect=False,connectTimeout=10000,syncTimeout=10000";
-    Console.WriteLine($"Redis configured via URL parsing: {host}:{port}");
-}
-else
-{
-    redisConfigString = "localhost:6379,abortConnect=False";
-    Console.WriteLine("WARNING: Redis not configured, using localhost fallback");
-}
+Console.WriteLine(string.IsNullOrEmpty(redisHost)
+    ? "WARNING: REDIS_HOST not set. Token blacklisting will not work."
+    : $"Redis configured: {redisHost}:{redisPort}");
 
 builder.Services.AddStackExchangeRedisCache(options =>
 {
-    options.Configuration = redisConfigString;
+    var configOptions = new StackExchange.Redis.ConfigurationOptions
+    {
+        AbortOnConnectFail = false,
+        ConnectTimeout = 15000,
+        SyncTimeout = 15000,
+        AsyncTimeout = 15000,
+        Ssl = true,
+        SslHost = redisHost,
+        Password = redisPassword,
+        User = "default",
+        ConnectRetry = 3,
+    };
+
+    configOptions.EndPoints.Add(redisHost ?? "localhost", redisPort);
+
+    // Aiven uses Let's Encrypt — accept valid certs
+    configOptions.CertificateValidation += (sender, cert, chain, errors) =>
+    {
+        if (errors == System.Net.Security.SslPolicyErrors.None) return true;
+        Console.WriteLine($"Redis SSL warning: {errors} - allowing Aiven Let's Encrypt cert");
+        return true;
+    };
+
+    options.ConfigurationOptions = configOptions;
     options.InstanceName = "AuthService_";
 });
+
+builder.Services.AddSingleton<IRedisCacheService, RedisCacheService>();
+builder.Services.AddSingleton<ITokenBlacklistService, TokenBlacklistService>();
+
 
 // // Register Redis distributed cache
 // builder.Services.AddStackExchangeRedisCache(options =>

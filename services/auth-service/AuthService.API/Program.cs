@@ -34,6 +34,27 @@ using Microsoft.Extensions.Caching.Distributed;
 
 
 
+
+// ============================================================================
+// TEMPORARY: Detect Outbound IP for Aiven Redis Allowlist
+// ============================================================================
+try
+{
+    using var httpClient = new HttpClient();
+    httpClient.Timeout = TimeSpan.FromSeconds(10);
+    var response = await httpClient.GetStringAsync("https://api.ipify.org");
+    Console.WriteLine($"=== ⭐ AUTH SERVICE OUTBOUND IP: {response.Trim()} ⭐ ===");
+    Console.WriteLine($"=== Add this IP to Aiven Redis allowlist ===");
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"=== Could not determine outbound IP: {ex.Message} ===");
+}
+// ============================================================================
+
+
+
+
 // Load .env file from current directory
 Env.Load();
 

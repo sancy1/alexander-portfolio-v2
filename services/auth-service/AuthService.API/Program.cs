@@ -356,27 +356,45 @@ builder.Services.AddCors(options =>
 // ============================================================================
 // REDIS CACHE SETUP | FOR AIVEN REDIS (RENDER DOES NOT SUPPORT SSL REQUIRED BY AIVEN)
 // ============================================================================
-var redisConnection = Environment.GetEnvironmentVariable("REDIS_CONNECTION");
+// ============================================================================
+// REDIS CACHE SETUP (Aiven Redis)
+// ============================================================================
+var redisHost = Environment.GetEnvironmentVariable("REDIS_HOST");
+var redisPort = int.Parse(Environment.GetEnvironmentVariable("REDIS_PORT") ?? "23851");
+var redisPassword = Environment.GetEnvironmentVariable("REDIS_PASSWORD");
 
-if (string.IsNullOrEmpty(redisConnection))
+if (string.IsNullOrEmpty(redisHost) || string.IsNullOrEmpty(redisPassword))
 {
-    Console.WriteLine("WARNING: REDIS_CONNECTION not set. Token blacklisting will not work.");
-    redisConnection = "localhost:6379,abortConnect=False";
+    Console.WriteLine("WARNING: Redis not configured. Token blacklisting will not work.");
 }
 else
 {
-    // Strip redis:// or rediss:// prefix if present — StackExchange.Redis uses its own format
-    if (redisConnection.StartsWith("rediss://"))
-        redisConnection = redisConnection.Substring("rediss://".Length);
-    else if (redisConnection.StartsWith("redis://"))
-        redisConnection = redisConnection.Substring("redis://".Length);
-
-    Console.WriteLine($"Redis configured: {redisConnection.Split('@').Last()}"); // log host only, not password
+    Console.WriteLine($"Redis configured: {redisHost}:{redisPort}");
 }
 
 builder.Services.AddStackExchangeRedisCache(options =>
 {
-    options.Configuration = redisConnection + ",abortConnect=False,ssl=True,sslprotocols=Tls12";
+    var configOptions = new StackExchange.Redis.ConfigurationOptions
+    {
+        AbortOnConnectFail = false,
+        ConnectTimeout = 15000,
+        SyncTimeout = 15000,
+        AsyncTimeout = 15000,
+        Ssl = true,
+        SslHost = redisHost ?? "localhost",
+        Password = redisPassword,
+        User = "default",
+        ConnectRetry = 3,
+        ReconnectRetryPolicy = new StackExchange.Redis.ExponentialRetry(2000),
+    };
+    configOptions.EndPoints.Add(redisHost ?? "localhost", redisPort);
+    configOptions.CertificateValidation += (_, _, _, errors) =>
+    {
+        if (errors == System.Net.Security.SslPolicyErrors.None) return true;
+        Console.WriteLine($"Redis SSL: {errors}");
+        return true; // Trust Aiven Let's Encrypt cert
+    };
+    options.ConfigurationOptions = configOptions;
     options.InstanceName = "AuthService_";
 });
 

@@ -26,15 +26,14 @@ public class LogoutAdminHandler : IRequestHandler<LogoutAdminCommand, bool>
     {
         try
         {
-            // Parse the JWT token to get its expiration
             var jwtToken = new JwtSecurityTokenHandler().ReadJwtToken(request.Token);
-            var expiry = jwtToken.ValidTo;
-            var adminIdClaim = jwtToken.Claims.FirstOrDefault(c => c.Type == "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier")?.Value;
-            
-            // Blacklist the token in Redis
-            await _tokenBlacklistService.BlacklistTokenAsync(request.Token, expiry);
-            
-            // Log logout event to Kafka via Outbox
+            var adminIdClaim = jwtToken.Claims
+                .FirstOrDefault(c => c.Type == "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier")
+                ?.Value;
+
+            // Blacklist the token — expiry is handled internally by TokenBlacklistService (30 days)
+            await _tokenBlacklistService.BlacklistTokenAsync(request.Token);
+
             if (!string.IsNullOrEmpty(adminIdClaim))
             {
                 await OutboxHelper.AddToOutboxAsync(
@@ -51,12 +50,12 @@ public class LogoutAdminHandler : IRequestHandler<LogoutAdminCommand, bool>
                         severity = "Low"
                     });
             }
-            
+
             return true;
         }
         catch
         {
-            // If token is invalid, still return success (client discards anyway)
+            // Token invalid or already expired — client discards it anyway
             return true;
         }
     }

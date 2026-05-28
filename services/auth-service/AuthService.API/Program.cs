@@ -159,7 +159,8 @@ builder.Services.AddSingleton<AuthService.Application.Interfaces.Security.IAdmin
 builder.Services.AddSingleton<IJwtGenerator, JwtGenerator>();
 
 // Register Token Blacklist Service
-builder.Services.AddSingleton<AuthService.Application.Interfaces.Security.ITokenBlacklistService, AuthService.Infrastructure.Caching.TokenBlacklistService>();
+builder.Services.AddSingleton<IRedisCacheService, RedisCacheService>();
+builder.Services.AddSingleton<ITokenBlacklistService, TokenBlacklistService>();
 
 // Register MediatR
 builder.Services.AddMediatR(cfg => {

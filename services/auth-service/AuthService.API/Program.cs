@@ -30,6 +30,7 @@ using AuthService.Application.Interfaces.Messaging;
 using AuthService.Infrastructure.Caching;
 using AuthService.API.Middleware;
 using AuthService.Infrastructure.Services;
+using Microsoft.Extensions.Caching.Distributed;
 
 
 

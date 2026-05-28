@@ -393,6 +393,7 @@ builder.Services.AddSingleton<IKafkaProducer, KafkaProducer>();
 var app = builder.Build();
 
 // Database Startup Verification
+// Database Startup Verification
 using (var scope = app.Services.CreateScope())
 {
     var services = scope.ServiceProvider;
@@ -417,27 +418,24 @@ using (var scope = app.Services.CreateScope())
         // ============================================================================
         // REDIS STARTUP VERIFICATION
         // ============================================================================
-        using (var redisScope = app.Services.CreateScope())
+        var redisLogger = services.GetRequiredService<ILogger<Program>>();
+        try
         {
-            var logger = redisScope.ServiceProvider.GetRequiredService<ILogger<Program>>();
-            try
+            var cache = services.GetRequiredService<IDistributedCache>();
+            var testKey = "startup:ping";
+            await cache.SetStringAsync(testKey, "pong", new DistributedCacheEntryOptions
             {
-                var cache = redisScope.ServiceProvider.GetRequiredService<IDistributedCache>();
-                var testKey = "startup:ping";
-                await cache.SetStringAsync(testKey, "pong", new DistributedCacheEntryOptions
-                {
-                    AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(30)
-                });
-                var result = await cache.GetStringAsync(testKey);
-                if (result == "pong")
-                    logger.LogInformation("✅ Redis connected and working successfully");
-                else
-                    logger.LogWarning("⚠️ Redis SET succeeded but GET returned unexpected value");
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "❌ Redis connection FAILED at startup - token blacklisting will not work");
-            }
+                AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(30)
+            });
+            var result = await cache.GetStringAsync(testKey);
+            if (result == "pong")
+                redisLogger.LogInformation("✅ Redis connected and working successfully");
+            else
+                redisLogger.LogWarning("⚠️ Redis SET succeeded but GET returned unexpected value");
+        }
+        catch (Exception ex)
+        {
+            redisLogger.LogError(ex, "❌ Redis connection FAILED at startup - token blacklisting will not work");
         }
     }
     catch (Exception ex)
@@ -446,6 +444,35 @@ using (var scope = app.Services.CreateScope())
         Environment.Exit(1);
     }
 }
+
+// using (var scope = app.Services.CreateScope())
+// {
+//     var services = scope.ServiceProvider;
+//     var logger = services.GetRequiredService<ILogger<Program>>();
+    
+//     try
+//     {
+//         var dbContext = services.GetRequiredService<AppDbContext>();
+//         var startupVerifier = services.GetRequiredService<IDatabaseStartupVerifier>();
+        
+//         logger.LogInformation("Verifying Neon database connection...");
+//         var isDbReady = await startupVerifier.VerifyAndWakeDatabaseAsync(dbContext);
+        
+//         if (!isDbReady)
+//         {
+//             logger.LogCritical("Neon database connection failed. Application shutting down.");
+//             Environment.Exit(1);
+//         }
+        
+//         logger.LogInformation("Neon database connection verified.");
+        
+//     }
+//     catch (Exception ex)
+//     {
+//         logger.LogCritical(ex, "Database initialization failed. Application shutting down.");
+//         Environment.Exit(1);
+//     }
+// }
 
 
 // Configure pipeline

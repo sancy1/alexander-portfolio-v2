@@ -413,6 +413,32 @@ using (var scope = app.Services.CreateScope())
         }
         
         logger.LogInformation("Neon database connection verified.");
+
+        // ============================================================================
+        // REDIS STARTUP VERIFICATION
+        // ============================================================================
+        using (var redisScope = app.Services.CreateScope())
+        {
+            var logger = redisScope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+            try
+            {
+                var cache = redisScope.ServiceProvider.GetRequiredService<IDistributedCache>();
+                var testKey = "startup:ping";
+                await cache.SetStringAsync(testKey, "pong", new DistributedCacheEntryOptions
+                {
+                    AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(30)
+                });
+                var result = await cache.GetStringAsync(testKey);
+                if (result == "pong")
+                    logger.LogInformation("✅ Redis connected and working successfully");
+                else
+                    logger.LogWarning("⚠️ Redis SET succeeded but GET returned unexpected value");
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "❌ Redis connection FAILED at startup - token blacklisting will not work");
+            }
+        }
     }
     catch (Exception ex)
     {

@@ -9,4 +9,8 @@ public class KafkaSettings
     public string BootstrapServers { get; set; } = "localhost:9092";
     public string TopicPrefix { get; set; } = "auth";
     public string ConsumerGroupId { get; set; } = "auth-service-group";
+    
+    // 👇 ADDED: Future-proofing slots for Aiven Cloud Authentication
+    public string? Username { get; set; }
+    public string? Password { get; set; }
 }

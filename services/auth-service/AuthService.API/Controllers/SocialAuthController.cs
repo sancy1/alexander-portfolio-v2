@@ -43,14 +43,22 @@ public class SocialAuthController : ControllerBase
     [HttpGet("google/login")]
     public IActionResult GoogleLogin()
     {
-        var redirectUrl = Url.Action("GoogleCallback", "SocialAuth", null, Request.Scheme);
+        // Read callback URL from environment variable (set to gateway URL)
+        var redirectUrl = Environment.GetEnvironmentVariable("GOOGLE_CALLBACK_URL");
+        
+        if (string.IsNullOrEmpty(redirectUrl))
+        {
+            // Fallback for local development - guarantees correct URL regardless of routing
+            redirectUrl = $"{Request.Scheme}://{Request.Host}/api/v1/auth/google/callback";
+        }
+        
         var clientId = Environment.GetEnvironmentVariable("GOOGLE_CLIENT_ID");
         var authUrl = $"https://accounts.google.com/o/oauth2/v2/auth?" +
-                      $"client_id={clientId}&" +
-                      $"redirect_uri={Uri.EscapeDataString(redirectUrl)}&" +
-                      "response_type=code&" +
-                      "scope=email profile&" +
-                      "access_type=offline";
+                    $"client_id={clientId}&" +
+                    $"redirect_uri={Uri.EscapeDataString(redirectUrl)}&" +
+                    "response_type=code&" +
+                    "scope=email profile&" +
+                    "access_type=offline";
         
         return Redirect(authUrl);
     }
@@ -73,7 +81,15 @@ public class SocialAuthController : ControllerBase
 
         var clientId = Environment.GetEnvironmentVariable("GOOGLE_CLIENT_ID");
         var clientSecret = Environment.GetEnvironmentVariable("GOOGLE_CLIENT_SECRET");
-        var redirectUrl = Url.Action("GoogleCallback", "SocialAuth", null, Request.Scheme);
+        
+        // Read callback URL from environment variable for consistency
+        var redirectUrl = Environment.GetEnvironmentVariable("GOOGLE_CALLBACK_URL");
+        
+        if (string.IsNullOrEmpty(redirectUrl))
+        {
+            // Fallback for local development
+            redirectUrl = $"{Request.Scheme}://{Request.Host}/api/v1/auth/google/callback";
+        }
 
         // Exchange code for access token
         var tokenClient = _httpClientFactory.CreateClient();
@@ -82,7 +98,7 @@ public class SocialAuthController : ControllerBase
             new KeyValuePair<string, string>("code", code),
             new KeyValuePair<string, string>("client_id", clientId ?? string.Empty),
             new KeyValuePair<string, string>("client_secret", clientSecret ?? string.Empty),
-            new KeyValuePair<string, string>("redirect_uri", redirectUrl ?? string.Empty),
+            new KeyValuePair<string, string>("redirect_uri", redirectUrl),
             new KeyValuePair<string, string>("grant_type", "authorization_code")
         });
 
@@ -94,7 +110,7 @@ public class SocialAuthController : ControllerBase
             return BadRequest(new { message = "Failed to get access token", details = tokenResponseBody });
         }
 
-        // Parse the response using lowercase property names
+        // Parse the response
         var tokenJson = System.Text.Json.JsonSerializer.Deserialize<GoogleTokenResponse>(tokenResponseBody);
 
         if (tokenJson == null || string.IsNullOrEmpty(tokenJson.access_token))
@@ -102,7 +118,7 @@ public class SocialAuthController : ControllerBase
             return BadRequest(new { message = "Failed to parse access token", response = tokenResponseBody });
         }
 
-        // Get user info using the access_token
+        // Get user info
         var userClient = _httpClientFactory.CreateClient();
         userClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {tokenJson.access_token}");
         var userResponse = await userClient.GetAsync("https://www.googleapis.com/oauth2/v2/userinfo");
@@ -144,21 +160,31 @@ public class SocialAuthController : ControllerBase
         });
     }
 
+
     /// <summary>
     /// Initiate GitHub OAuth login
     /// </summary>
     [HttpGet("github/login")]
     public IActionResult GitHubLogin()
     {
-        var redirectUrl = Url.Action("GitHubCallback", "SocialAuth", null, Request.Scheme);
+        // Read callback URL from environment variable (set to gateway URL)
+        var redirectUrl = Environment.GetEnvironmentVariable("GITHUB_CALLBACK_URL");
+        
+        if (string.IsNullOrEmpty(redirectUrl))
+        {
+            // Fallback for local development
+            redirectUrl = $"{Request.Scheme}://{Request.Host}/api/v1/auth/github/callback";
+        }
+        
         var clientId = Environment.GetEnvironmentVariable("GITHUB_CLIENT_ID");
         var authUrl = $"https://github.com/login/oauth/authorize?" +
-                      $"client_id={clientId}&" +
-                      $"redirect_uri={Uri.EscapeDataString(redirectUrl)}&" +
-                      "scope=user:email";
+                    $"client_id={clientId}&" +
+                    $"redirect_uri={Uri.EscapeDataString(redirectUrl)}&" +
+                    "scope=user:email";
         
         return Redirect(authUrl);
     }
+
 
     /// <summary>
     /// GitHub OAuth callback
@@ -173,7 +199,15 @@ public class SocialAuthController : ControllerBase
 
         var clientId = Environment.GetEnvironmentVariable("GITHUB_CLIENT_ID");
         var clientSecret = Environment.GetEnvironmentVariable("GITHUB_CLIENT_SECRET");
-        var redirectUrl = Url.Action("GitHubCallback", "SocialAuth", null, Request.Scheme);
+        
+        // Read callback URL from environment variable
+        var redirectUrl = Environment.GetEnvironmentVariable("GITHUB_CALLBACK_URL");
+        
+        if (string.IsNullOrEmpty(redirectUrl))
+        {
+            // Fallback for local development
+            redirectUrl = $"{Request.Scheme}://{Request.Host}/api/v1/auth/github/callback";
+        }
 
         // Exchange code for access token
         var tokenClient = _httpClientFactory.CreateClient();
@@ -182,7 +216,7 @@ public class SocialAuthController : ControllerBase
             new KeyValuePair<string, string>("code", code),
             new KeyValuePair<string, string>("client_id", clientId ?? string.Empty),
             new KeyValuePair<string, string>("client_secret", clientSecret ?? string.Empty),
-            new KeyValuePair<string, string>("redirect_uri", redirectUrl ?? string.Empty)
+            new KeyValuePair<string, string>("redirect_uri", redirectUrl)
         });
 
         var tokenResponse = await tokenClient.PostAsync("https://github.com/login/oauth/access_token", tokenRequest);
@@ -243,6 +277,7 @@ public class SocialAuthController : ControllerBase
             message = "Login successful"
         });
     }
+
 
     /// <summary>
     /// Complete user profile after OAuth login (first time only)

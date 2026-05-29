@@ -1,0 +1,35 @@
+name: Aiven Valkey Keep Alive
+
+on:
+  schedule:
+    # Runs automatically every 6 hours (at 00:00, 06:00, 12:00, 18:00 UTC)
+    - cron: '0 */6 * * *'
+  # Allows you to manually trigger it from the GitHub Actions tab anytime
+  workflow_dispatch: 
+
+jobs:
+  ping-aiven:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Aiven Management API
+        run: |
+          STATUS_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X GET "https://aiven.io" \
+            -H "Authorization: Bearer ${{ secrets.AIVEN_API_TOKEN }}")
+          
+          echo "Aiven API Response Status: $STATUS_CODE"
+          
+          if [ "$STATUS_CODE" -eq 200 ]; then
+            echo "✅ Successfully pinged portfolio-cache! Active status maintained."
+          elif [ "$STATUS_CODE" -eq 401 ] || [ "$STATUS_CODE" -eq 403 ]; then
+            echo "❌ Authentication failed! Please verify your AIVEN_API_TOKEN secret in GitHub."
+            exit 1
+          else
+            echo "⚠️ Unexpected status code ($STATUS_CODE). Attempting power-on fallback..."
+            
+            # Fallback: Explicitly send a power-on command if the service went cold
+            curl -s -X PUT "https://aiven.io/power" \
+              -H "Authorization: Bearer ${{ secrets.AIVEN_API_TOKEN }}" \
+              -H "Content-Type: application/json" \
+              -d '{"powered": true}'
+          fi

@@ -354,7 +354,7 @@ builder.Services.AddCors(options =>
 
 
 // ============================================================================
-// REDIS CACHE SETUP | FOR AIVEN REDIS (RENDER DOES NOT SUPPORT SSL REQUIRED BY AIVEN)
+// REDIS CACHE SETUP | FOR AIVEN REDIS 
 // ============================================================================
 // ============================================================================
 // REDIS CACHE SETUP (Aiven Redis)

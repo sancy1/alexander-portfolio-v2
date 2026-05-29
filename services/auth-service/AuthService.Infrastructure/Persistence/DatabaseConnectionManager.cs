@@ -1,8 +1,4 @@
 // File: AuthService.Infrastructure/Persistence/DatabaseConnectionManager.cs
-// Purpose: Detects cloud provider and optimizes connection strings dynamically
-// Layer: Infrastructure
-
-using System.Data.Common;
 using AuthService.Application.Common;
 using Microsoft.Extensions.Options;
 using Npgsql;
@@ -23,16 +19,22 @@ public class DatabaseConnectionManager : IDatabaseConnectionManager
     private readonly DatabaseSettings _settings;
     private readonly DatabaseProfile _profile;
     private readonly ILogger<DatabaseConnectionManager>? _logger;
+    private readonly string _cachedConnectionString; // ← cache it once
 
-    public DatabaseConnectionManager(IOptions<DatabaseSettings> options, ILogger<DatabaseConnectionManager>? logger = null)
+    public DatabaseConnectionManager(
+        IOptions<DatabaseSettings> options,
+        ILogger<DatabaseConnectionManager>? logger = null)
     {
         _settings = options.Value;
         _logger = logger;
         _profile = DetectProfile(_settings.ConnectionString);
-        
+
+        // Log ONCE at construction — never again
         _logger?.LogInformation("Detected database profile: {Profile}", _profile);
-        _logger?.LogInformation("Raw connection string: {ConnectionString}", 
-            _settings.ConnectionString.Substring(0, Math.Min(100, _settings.ConnectionString.Length)) + "...");
+
+        // Build and cache the connection string once at startup
+        _cachedConnectionString = BuildConnectionString();
+        _logger?.LogInformation("Database connection string built for profile: {Profile}", _profile);
     }
 
     public DatabaseProfile GetDetectedProfile() => _profile;
@@ -40,7 +42,6 @@ public class DatabaseConnectionManager : IDatabaseConnectionManager
     public int GetMaxRetryAttempts()
     {
         if (_settings.OverrideMaxRetries > 0) return _settings.OverrideMaxRetries;
-        
         return _profile switch
         {
             DatabaseProfile.ServerlessPooler => 6,
@@ -58,13 +59,13 @@ public class DatabaseConnectionManager : IDatabaseConnectionManager
         };
     }
 
-    public string BuildOptimizedConnectionString()
+    // Returns cached string — no logging, no rebuilding on every call
+    public string BuildOptimizedConnectionString() => _cachedConnectionString;
+
+    private string BuildConnectionString()
     {
         var rawUrl = _settings.ConnectionString;
-        
-        // Parse the connection string to Npgsql format
         var parsedConnectionString = ParsePostgresUrlToNpgsql(rawUrl);
-        
         var builder = new NpgsqlConnectionStringBuilder(parsedConnectionString);
 
         switch (_profile)
@@ -96,11 +97,7 @@ public class DatabaseConnectionManager : IDatabaseConnectionManager
         builder.Timeout = 15;
         builder.ConnectionIdleLifetime = 300;
 
-        var result = builder.ToString();
-        _logger?.LogInformation("Built connection string (host): {Host}", 
-            result.Split(';').FirstOrDefault(s => s.StartsWith("Host=")));
-        
-        return result;
+        return builder.ToString();
     }
 
     private static DatabaseProfile DetectProfile(string connectionString)
@@ -121,43 +118,37 @@ public class DatabaseConnectionManager : IDatabaseConnectionManager
 
     private static string ParsePostgresUrlToNpgsql(string url)
     {
-        // If it's already in Npgsql format
         if (url.Contains("Host=") || url.Contains("Server="))
             return url;
 
-        // Handle postgresql:// URLs
         if (url.StartsWith("postgresql://") || url.StartsWith("postgres://"))
         {
             try
             {
-                // Remove the protocol
-                var withoutProtocol = url.Replace("postgresql://", "").Replace("postgres://", "");
-                
-                // Split user:pass from host/db
+                var withoutProtocol = url
+                    .Replace("postgresql://", "")
+                    .Replace("postgres://", "");
+
                 var atIndex = withoutProtocol.IndexOf('@');
                 if (atIndex > 0)
                 {
                     var userPass = withoutProtocol.Substring(0, atIndex);
                     var hostDb = withoutProtocol.Substring(atIndex + 1);
-                    
-                    // Split user and password
+
                     var userPassParts = userPass.Split(':');
                     var username = userPassParts[0];
                     var password = userPassParts.Length > 1 ? userPassParts[1] : "";
-                    
-                    // Split host and database
+
                     var slashIndex = hostDb.IndexOf('/');
                     if (slashIndex > 0)
                     {
                         var hostPart = hostDb.Substring(0, slashIndex);
                         var database = hostDb.Substring(slashIndex + 1);
-                        
-                        // Remove query parameters from database name
+
                         var queryIndex = database.IndexOf('?');
                         if (queryIndex > 0)
                             database = database.Substring(0, queryIndex);
-                        
-                        // Parse host and port
+
                         var host = hostPart;
                         var port = 5432;
                         var colonIndex = hostPart.IndexOf(':');
@@ -166,7 +157,7 @@ public class DatabaseConnectionManager : IDatabaseConnectionManager
                             host = hostPart.Substring(0, colonIndex);
                             port = int.Parse(hostPart.Substring(colonIndex + 1));
                         }
-                        
+
                         return $"Host={host};Port={port};Database={database};Username={username};Password={password};SslMode=Require;";
                     }
                 }
@@ -177,7 +168,7 @@ public class DatabaseConnectionManager : IDatabaseConnectionManager
                 return url;
             }
         }
-        
+
         return url;
     }
 }

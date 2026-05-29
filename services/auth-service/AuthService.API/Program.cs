@@ -199,6 +199,7 @@ builder.Services.AddMediatR(cfg => {
 
 builder.Services.AddEndpointsApiExplorer();
 
+
 // Swagger Configuration with XML documentation
 builder.Services.AddSwaggerGen(c =>
 {
@@ -250,6 +251,7 @@ builder.Services.AddSwaggerGen(c =>
 
 
 });
+
 
 // Database Configuration - Read from .env
 var databaseUrl = Environment.GetEnvironmentVariable("DATABASE_URL")

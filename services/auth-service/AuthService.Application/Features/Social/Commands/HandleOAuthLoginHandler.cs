@@ -4,7 +4,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using AuthService.Application.DTOs.Responses;
-using AuthService.Application.DTOs.Events; // Enforces our clean cross-service event schemas
+using AuthService.Application.DTOs.Events;
 using AuthService.Application.Interfaces.Persistence;
 using AuthService.Application.Common;
 using AuthService.Domain.Entities;
@@ -16,7 +16,7 @@ namespace AuthService.Application.Features.Social.Commands;
 public class HandleOAuthLoginHandler : IRequestHandler<HandleOAuthLoginCommand, AuthResponse>
 {
     private readonly ISocialUserRepository _socialUserRepository;
-    private readonly IOutboxRepository _outboxRepository; // 👇 Injected to record outbox table state updates
+    private readonly IOutboxRepository _outboxRepository;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IJwtGenerator _jwtGenerator;
 
@@ -34,30 +34,31 @@ public class HandleOAuthLoginHandler : IRequestHandler<HandleOAuthLoginCommand, 
 
     public async Task<AuthResponse> Handle(HandleOAuthLoginCommand request, CancellationToken cancellationToken)
     {
-        // Enforce transaction isolation boundary for PostgreSQL row mutations
-        using var transaction = await _unitOfWork.BeginTransactionAsync();
-        try
+        // ─── FIRST STAGE: DUPLICATE EMAIL PREVENTION VALIDATION ───
+        var existingByEmail = await _socialUserRepository.GetByEmailAsync(request.Email);
+        
+        if (existingByEmail != null)
         {
-            // ─── FIRST STAGE: DUPLICATE EMAIL PREVENTION VALIDATION ───
-            var existingByEmail = await _socialUserRepository.GetByEmailAsync(request.Email);
-            
-            if (existingByEmail != null)
+            if (existingByEmail.Provider == request.Provider && existingByEmail.ProviderId == request.ProviderId)
             {
-                if (existingByEmail.Provider == request.Provider && existingByEmail.ProviderId == request.ProviderId)
+                // Check and execute avatar patches in memory 
+                if (string.IsNullOrEmpty(existingByEmail.AvatarUrl) && !string.IsNullOrEmpty(request.AvatarUrl))
                 {
-                    // Check and execute avatar patches in memory 
-                    if (string.IsNullOrEmpty(existingByEmail.AvatarUrl) && !string.IsNullOrEmpty(request.AvatarUrl))
-                    {
-                        existingByEmail.UpdateAvatar(request.AvatarUrl);
-                    }
+                    existingByEmail.UpdateAvatar(request.AvatarUrl);
+                }
+                
+                if (existingByEmail.IsProfileComplete)
+                {
+                    existingByEmail.RecordLogin();
+                    _socialUserRepository.Update(existingByEmail);
                     
-                    if (existingByEmail.IsProfileComplete)
-                    {
-                        existingByEmail.RecordLogin();
-                        _socialUserRepository.Update(existingByEmail);
-                        
-                        // Stage single consolidated outbox message entry routed to BOTH brokers ("both")
-                        await OutboxHelper.AddToOutboxAsync(_outboxRepository, "social.user.loggedin", "user.loggedin", "both", new UserLoggedInEvent
+                    await OutboxHelper.AddToOutboxAsync(
+                        _outboxRepository,
+                        _unitOfWork,
+                        "social.user.loggedin",
+                        "user.loggedin",
+                        "rabbitmq",  // Changed from "both" to "rabbitmq"
+                        new UserLoggedInEvent
                         {
                             EventType = "social.user.loggedin",
                             OccurredAt = DateTime.UtcNow,
@@ -67,23 +68,28 @@ public class HandleOAuthLoginHandler : IRequestHandler<HandleOAuthLoginCommand, 
                             LoginMethod = request.Provider.ToString().ToLower(),
                             ClientIp = request.ClientIp,
                             UserAgent = request.UserAgent
-                        });
+                        }
+                    );
 
-                        await _unitOfWork.SaveChangesAsync(cancellationToken);
-                        await transaction.CommitAsync(cancellationToken);
-                        
-                        var token = _jwtGenerator.GenerateUserToken(existingByEmail);
-                        return AuthResponse.CreateSuccess(token, existingByEmail.Id);
-                    }
-
-                    // User exists but registration is half-baked
                     await _unitOfWork.SaveChangesAsync(cancellationToken);
-                    await transaction.CommitAsync(cancellationToken);
-                    return AuthResponse.CreateProfileIncomplete(existingByEmail.Id);
+                    
+                    var token = _jwtGenerator.GenerateUserToken(existingByEmail);
+                    return AuthResponse.CreateSuccess(token, existingByEmail.Id);
                 }
-                
-                // Email account mismatch collision
-                await OutboxHelper.AddToOutboxAsync(_outboxRepository, "security.failed_oauth_login", "security.failed_login", "kafka", new
+
+                // User exists but registration is half-baked
+                await _unitOfWork.SaveChangesAsync(cancellationToken);
+                return AuthResponse.CreateProfileIncomplete(existingByEmail.Id);
+            }
+            
+            // Email account mismatch collision
+            await OutboxHelper.AddToOutboxAsync(
+                _outboxRepository,
+                _unitOfWork,
+                "security.failed_oauth_login",
+                "security.failed_login",
+                "rabbitmq",  // Changed from "kafka" to "rabbitmq"
+                new
                 {
                     eventType = "security.failed_oauth_login",
                     email = request.Email,
@@ -95,28 +101,34 @@ public class HandleOAuthLoginHandler : IRequestHandler<HandleOAuthLoginCommand, 
                     userAgent = request.UserAgent,
                     severity = "Medium"
                 });
-                await _unitOfWork.SaveChangesAsync(cancellationToken);
-                await transaction.CommitAsync(cancellationToken);
-                
-                return AuthResponse.CreateFailure($"An account with email {request.Email} already exists. Please login using {existingByEmail.Provider} instead.");
-            }
+            
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+            
+            return AuthResponse.CreateFailure($"An account with email {request.Email} already exists. Please login using {existingByEmail.Provider} instead.");
+        }
 
-            // ─── SECOND STAGE: PROVIDER CORRELATION MATCHES ───
-            var existingByProvider = await _socialUserRepository.GetByProviderIdAsync(request.ProviderId, request.Provider);
+        // ─── SECOND STAGE: PROVIDER CORRELATION MATCHES ───
+        var existingByProvider = await _socialUserRepository.GetByProviderIdAsync(request.ProviderId, request.Provider);
 
-            if (existingByProvider != null)
+        if (existingByProvider != null)
+        {
+            if (string.IsNullOrEmpty(existingByProvider.AvatarUrl) && !string.IsNullOrEmpty(request.AvatarUrl))
             {
-                if (string.IsNullOrEmpty(existingByProvider.AvatarUrl) && !string.IsNullOrEmpty(request.AvatarUrl))
-                {
-                    existingByProvider.UpdateAvatar(request.AvatarUrl);
-                }
+                existingByProvider.UpdateAvatar(request.AvatarUrl);
+            }
+            
+            if (existingByProvider.IsProfileComplete)
+            {
+                existingByProvider.RecordLogin();
+                _socialUserRepository.Update(existingByProvider);
                 
-                if (existingByProvider.IsProfileComplete)
-                {
-                    existingByProvider.RecordLogin();
-                    _socialUserRepository.Update(existingByProvider);
-                    
-                    await OutboxHelper.AddToOutboxAsync(_outboxRepository, "social.user.loggedin", "user.loggedin", "both", new UserLoggedInEvent
+                await OutboxHelper.AddToOutboxAsync(
+                    _outboxRepository,
+                    _unitOfWork,
+                    "social.user.loggedin",
+                    "user.loggedin",
+                    "rabbitmq",  // Changed from "both" to "rabbitmq"
+                    new UserLoggedInEvent
                     {
                         EventType = "social.user.loggedin",
                         OccurredAt = DateTime.UtcNow,
@@ -126,32 +138,36 @@ public class HandleOAuthLoginHandler : IRequestHandler<HandleOAuthLoginCommand, 
                         LoginMethod = request.Provider.ToString().ToLower(),
                         ClientIp = request.ClientIp,
                         UserAgent = request.UserAgent
-                    });
+                    }
+                );
 
-                    await _unitOfWork.SaveChangesAsync(cancellationToken);
-                    await transaction.CommitAsync(cancellationToken);
-                    
-                    var token = _jwtGenerator.GenerateUserToken(existingByProvider);
-                    return AuthResponse.CreateSuccess(token, existingByProvider.Id);
-                }
-                
                 await _unitOfWork.SaveChangesAsync(cancellationToken);
-                await transaction.CommitAsync(cancellationToken);
-                return AuthResponse.CreateProfileIncomplete(existingByProvider.Id);
+                
+                var token = _jwtGenerator.GenerateUserToken(existingByProvider);
+                return AuthResponse.CreateSuccess(token, existingByProvider.Id);
             }
-
-            // ─── THIRD STAGE: COLD SIGNUP REGISTRATION INTERCEPT ───
-            var newUser = new SocialUser(request.ProviderId, request.Provider, request.Email, request.DisplayName);
-
-            if (!string.IsNullOrEmpty(request.AvatarUrl))
-            {
-                newUser.UpdateAvatar(request.AvatarUrl);
-            }
-
-            await _socialUserRepository.AddAsync(newUser);
             
-            // Log registration history event to Kafka for big data and analytical archiving patterns
-            await OutboxHelper.AddToOutboxAsync(_outboxRepository, "social.user.registered", "user.registered", "kafka", new UserRegisteredEvent
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+            return AuthResponse.CreateProfileIncomplete(existingByProvider.Id);
+        }
+
+        // ─── THIRD STAGE: COLD SIGNUP REGISTRATION INTERCEPT ───
+        var newUser = new SocialUser(request.ProviderId, request.Provider, request.Email, request.DisplayName);
+
+        if (!string.IsNullOrEmpty(request.AvatarUrl))
+        {
+            newUser.UpdateAvatar(request.AvatarUrl);
+        }
+
+        await _socialUserRepository.AddAsync(newUser);
+        
+        await OutboxHelper.AddToOutboxAsync(
+            _outboxRepository,
+            _unitOfWork,
+            "social.user.registered",
+            "user.registered",
+            "rabbitmq",  // Changed from "kafka" to "rabbitmq"
+            new UserRegisteredEvent
             {
                 EventType = "social.user.registered",
                 OccurredAt = DateTime.UtcNow,
@@ -164,16 +180,8 @@ public class HandleOAuthLoginHandler : IRequestHandler<HandleOAuthLoginCommand, 
                 UserAgent = request.UserAgent
             });
 
-            // Flush everything safely in one network write call
-            await _unitOfWork.SaveChangesAsync(cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-            return AuthResponse.CreateProfileIncomplete(newUser.Id);
-        }
-        catch (Exception)
-        {
-            await transaction.RollbackAsync(cancellationToken);
-            throw;
-        }
+        return AuthResponse.CreateProfileIncomplete(newUser.Id);
     }
 }

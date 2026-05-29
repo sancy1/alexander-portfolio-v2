@@ -64,6 +64,7 @@ Console.WriteLine($"DEBUG: DATABASE_URL = {testDbUrl}");
 
 var builder = WebApplication.CreateBuilder(args);
 
+
 // Add configuration from environment variables
 builder.Configuration.AddEnvironmentVariables();
 
@@ -73,12 +74,19 @@ builder.Services.AddControllers();
 builder.Services.AddScoped<ChangePasswordValidator>();
 builder.Services.AddScoped<ResetPasswordValidator>();
 
-// Register Outbox Repository and Processor
+// ============================================================================
+// OUTBOX REPOSITORY & BACKGROUND ENGINE (👇 PASTE THIS CLEAN VERSION)
+// ============================================================================
+// 1. Register the concrete repository implementation
 builder.Services.AddScoped<IOutboxRepository, OutboxRepository>();
-builder.Services.AddScoped<IOutboxProcessorService, OutboxProcessorService>();
 
-// Register Outbox Repository and Processor
-builder.Services.AddScoped<AuthService.Application.Interfaces.Services.IOutboxProcessorService, AuthService.Infrastructure.Services.OutboxProcessorService>();
+// 2. Register your outbox poller background task worker thread
+builder.Services.AddHostedService<AuthService.Infrastructure.Services.OutboxProcessorService>();
+
+// 3. Explicitly link the correct interface contract to resolve your ambiguous build errors
+builder.Services.AddScoped<AuthService.Infrastructure.Services.IOutboxProcessorService, AuthService.Infrastructure.Services.OutboxProcessorService>();
+
+
 
 // ============================================================================
 // JWT AUTHENTICATION
@@ -356,9 +364,7 @@ builder.Services.AddCors(options =>
 // ============================================================================
 // REDIS CACHE SETUP | FOR AIVEN REDIS 
 // ============================================================================
-// ============================================================================
-// REDIS CACHE SETUP (Aiven Redis)
-// ============================================================================
+
 var redisHost = Environment.GetEnvironmentVariable("REDIS_HOST");
 var redisPort = int.Parse(Environment.GetEnvironmentVariable("REDIS_PORT") ?? "23851");
 var redisPassword = Environment.GetEnvironmentVariable("REDIS_PASSWORD");
@@ -404,24 +410,50 @@ builder.Services.AddSingleton<ITokenBlacklistService, TokenBlacklistService>();
 
 
 // ============================================================================
-// MESSAGING SERVICES (RabbitMQ & Kafka)
+// 1. RABBITMQ & CLOUD CONFIGURATION PARSING
 // ============================================================================
+var rabbitMQHost = Environment.GetEnvironmentVariable("RABBITMQ_HOST") ?? "localhost";
+// 👇 Automatically enforces TLS port 5671 if cloud infrastructure is detected
+var defaultPort = rabbitMQHost.Contains("cloudamqp.com") ? "5671" : "5672";
+var rabbitMQPort = int.Parse(Environment.GetEnvironmentVariable("RABBITMQ_PORT") ?? defaultPort);
+var rabbitMQUser = Environment.GetEnvironmentVariable("RABBITMQ_USERNAME") ?? "guest";
+var rabbitMQPassword = Environment.GetEnvironmentVariable("RABBITMQ_PASSWORD") ?? "guest";
+var rabbitMQVHost = Environment.GetEnvironmentVariable("RABBITMQ_VIRTUAL_HOST") ?? "/";
 
-// RabbitMQ Configuration
-var rabbitMQSettings = new RabbitMQSettings
-{
-    HostName = Environment.GetEnvironmentVariable("RABBITMQ_HOST") ?? "localhost",
-    Port = int.Parse(Environment.GetEnvironmentVariable("RABBITMQ_PORT") ?? "5672"),
-    UserName = Environment.GetEnvironmentVariable("RABBITMQ_USER") ?? "guest",
-    Password = Environment.GetEnvironmentVariable("RABBITMQ_PASSWORD") ?? "guest"
-};
 builder.Services.Configure<RabbitMQSettings>(options =>
 {
-    options.HostName = rabbitMQSettings.HostName;
-    options.Port = rabbitMQSettings.Port;
-    options.UserName = rabbitMQSettings.UserName;
-    options.Password = rabbitMQSettings.Password;
+    options.HostName = rabbitMQHost;
+    options.Port = rabbitMQPort;
+    options.UserName = rabbitMQUser;
+    options.Password = rabbitMQPassword;
+    options.VirtualHost = rabbitMQVHost;
+    options.UseSsl = rabbitMQHost.Contains("cloudamqp.com") || rabbitMQHost.Contains("aivencloud.com");
+    options.SslServerName = rabbitMQHost;
 });
+
+// ============================================================================
+// 2. MESSAGING CORE SERVICES INFRASTRUCTURE (SINGLETON CONNECTION PATTERNS)
+// ============================================================================
+// ─── THE CRITICAL CEILING SAFEGUARD ───
+// Manages your CloudAMQP socket connection pool as a strict single connection instance
+builder.Services.AddSingleton<RabbitMQConnectionManager>();
+
+// Lightweight publisher handles isolated message despatches cleanly over scoped channels
+builder.Services.AddScoped<IMessagePublisher, RabbitMQPublisher>();
+
+// The subscriber background consumer worker threads run continuously on startup
+builder.Services.AddHostedService<RabbitMQSubscriber>();
+
+// ============================================================================
+// 3. BACKGROUND TASK ENGINES (OUTBOX WORKERS)
+// ============================================================================
+// 👇 Registers your outbox poller cleanly as a single native background runtime thread
+builder.Services.AddHostedService<OutboxProcessorService>();
+
+
+
+
+
 
 // Kafka Configuration
 var kafkaSettings = new KafkaSettings

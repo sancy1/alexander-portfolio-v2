@@ -4,7 +4,9 @@
 
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
-using AuthService.Application.Interfaces.Services;  // UPDATED using
+using Microsoft.Extensions.Logging;
+using System.Threading.Tasks;
+using AuthService.Infrastructure.Services; // 👇 FIXED: Points to your verified, unique interface file location
 
 namespace AuthService.API.Controllers;
 
@@ -48,7 +50,8 @@ public class OutboxController : ControllerBase
     [HttpDelete("cleanup")]
     public async Task<IActionResult> CleanupOldMessages([FromQuery] int daysToKeep = 7)
     {
-        await _outboxProcessor.CleanupOldMessagesAsync(daysToKeep);
+        // 👇 FIXED: Changed from CleanupOldMessagesAsync to match your actual database repository method name
+        await _outboxProcessor.CleanupProcessedMessagesAsync(daysToKeep);
         return Ok(new { message = $"Cleaned up messages older than {daysToKeep} days" });
     }
 }

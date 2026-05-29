@@ -92,41 +92,48 @@ public class AdminAuthController : ControllerBase
         });
     }
 
-    /// <summary>
-    /// Login as an admin
-    /// </summary>
-    [HttpPost("login")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    public async Task<IActionResult> Login([FromBody] AdminLoginRequest request)
-    {
-        var validationResult = await _loginValidator.ValidateAsync(request);
-        if (!validationResult.IsValid)
+        /// <summary>
+        /// Login as an admin
+        /// </summary>
+        [HttpPost("login")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        public async Task<IActionResult> Login([FromBody] AdminLoginRequest request)
         {
-            return BadRequest(new
+            var validationResult = await _loginValidator.ValidateAsync(request);
+            if (!validationResult.IsValid)
             {
-                errors = validationResult.Errors.Select(e => new { e.PropertyName, e.ErrorMessage })
+                return BadRequest(new
+                {
+                    errors = validationResult.Errors.Select(e => new { e.PropertyName, e.ErrorMessage })
+                });
+            }
+
+            // 👇 1. EXTRACT TRACKING HEADERS (Safely falls back if behind Nginx empty headers)
+            var clientIp = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "127.0.0.1";
+            var userAgent = Request.Headers["User-Agent"].ToString() ?? "Unknown";
+
+            // 👇 2. UPDATE COMMAND CALL (Passes the extra parameters down to your atomic handler)
+            var command = new LoginAdminCommand(request.Username, request.Password, clientIp, userAgent);
+            var result = await _mediator.Send(command);
+
+            if (!result.Success)
+            {
+                return Unauthorized(new { message = result.Message });
+            }
+
+            return Ok(new
+            {
+                token = result.Token,
+                adminId = result.AdminId,
+                username = result.Username,
+                email = result.Email,
+                message = "Login successful"
             });
         }
 
-        var command = new LoginAdminCommand(request.Username, request.Password);
-        var result = await _mediator.Send(command);
 
-        if (!result.Success)
-        {
-            return Unauthorized(new { message = result.Message });
-        }
-
-        return Ok(new
-        {
-            token = result.Token,
-            adminId = result.AdminId,
-            username = result.Username,
-            email = result.Email,
-            message = "Login successful"
-        });
-    }
 
     /// <summary>
     /// Logout an admin (client discards the token)

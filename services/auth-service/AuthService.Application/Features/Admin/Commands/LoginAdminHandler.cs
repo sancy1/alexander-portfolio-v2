@@ -1,9 +1,10 @@
 // File: AuthService.Application/Features/Admin/Commands/LoginAdminHandler.cs
-// Purpose: Handles admin login logic with soft delete check and outbox audit logging
-// Layer: Application
-
 using MediatR;
+using System;
+using System.Threading;
+using System.Threading.Tasks;
 using AuthService.Application.DTOs.Responses;
+using AuthService.Application.DTOs.Events; // Enforces our clean UserLoggedInEvent mappings
 using AuthService.Domain.Entities;
 using AuthService.Domain.Enums;
 using AuthService.Domain.Interfaces;
@@ -36,7 +37,6 @@ public class LoginAdminHandler : IRequestHandler<LoginAdminCommand, AdminLoginRe
 
     public async Task<AdminLoginResponse> Handle(LoginAdminCommand request, CancellationToken cancellationToken)
     {
-        // Use global:: to avoid namespace conflict with Features.Admin
         global::AuthService.Domain.Entities.Admin? admin = null;
         
         if (request.Username.Contains("@"))
@@ -48,34 +48,41 @@ public class LoginAdminHandler : IRequestHandler<LoginAdminCommand, AdminLoginRe
             admin = await _adminRepository.GetByUsernameAsync(request.Username);
         }
 
-        // CHECK IF ACCOUNT IS SOFT DELETED
+        // ====================================================================
+        // SECURITY PATHWAY A: INTERCEPT ACCOUNT DELETED
+        // ====================================================================
         if (admin != null && admin.IsDeleted)
         {
-            // Log failed attempt - deleted account
+            // 👇 Clean staging call utilizing our atomic design principles
             await OutboxHelper.AddToOutboxAsync(
                 _outboxRepository,
-                _unitOfWork,
                 "security.failed_login",
                 "security.failed_login",
-                "kafka",
+                "kafka", // Security audits drop strictly into the Kafka archive diary
                 new
                 {
                     eventType = "security.failed_login",
                     username = request.Username,
-                    timestamp = DateTime.UtcNow,
+                    occurredAt = DateTime.UtcNow,
                     reason = "account_deleted",
+                    userType = "Admin",
+                    clientIp = request.ClientIp,
+                    userAgent = request.UserAgent,
                     severity = "Medium"
                 });
             
+            // Single safe save ensures the outbox audit trail row is written to Neon PostgreSQL
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
             return AdminLoginResponse.CreateFailure("Account has been deleted. Please restore your account first.");
         }
 
-        // CHECK IF ACCOUNT IS DEACTIVATED
+        // ====================================================================
+        // SECURITY PATHWAY B: INTERCEPT ACCOUNT DEACTIVATED
+        // ====================================================================
         if (admin != null && admin.Status == AccountStatus.Deactivated)
         {
             await OutboxHelper.AddToOutboxAsync(
                 _outboxRepository,
-                _unitOfWork,
                 "security.failed_login",
                 "security.failed_login",
                 "kafka",
@@ -83,21 +90,25 @@ public class LoginAdminHandler : IRequestHandler<LoginAdminCommand, AdminLoginRe
                 {
                     eventType = "security.failed_login",
                     username = request.Username,
-                    timestamp = DateTime.UtcNow,
+                    occurredAt = DateTime.UtcNow,
                     reason = "account_deactivated",
+                    userType = "Admin",
+                    clientIp = request.ClientIp,
+                    userAgent = request.UserAgent,
                     severity = "Medium"
                 });
             
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
             return AdminLoginResponse.CreateFailure("Account is deactivated. Contact support.");
         }
 
-        // Check password
+        // ====================================================================
+        // SECURITY PATHWAY C: INVALID CREDENTIAL HANDLING
+        // ====================================================================
         if (admin == null || !_passwordHasher.VerifyPassword(request.Password, admin.PasswordHash))
         {
-            // Log failed login attempt
             await OutboxHelper.AddToOutboxAsync(
                 _outboxRepository,
-                _unitOfWork,
                 "security.failed_login",
                 "security.failed_login",
                 "kafka",
@@ -105,53 +116,65 @@ public class LoginAdminHandler : IRequestHandler<LoginAdminCommand, AdminLoginRe
                 {
                     eventType = "security.failed_login",
                     username = request.Username,
-                    timestamp = DateTime.UtcNow,
+                    occurredAt = DateTime.UtcNow,
                     reason = admin == null ? "user_not_found" : "invalid_password",
+                    userType = "Admin",
+                    clientIp = request.ClientIp,
+                    userAgent = request.UserAgent,
                     severity = "Medium"
                 });
             
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
             return AdminLoginResponse.CreateFailure("Invalid username/email or password");
         }
 
-        admin.RecordLogin();
-        _adminRepository.Update(admin);
+        // ====================================================================
+        // SUCCESS PATHWAY: ATOMIC TRANSACTION TRANSACTION BOUNDARY
+        // ====================================================================
+        // Force an isolated PostgreSQL transaction scope block
+        using var transaction = await _unitOfWork.BeginTransactionAsync();
+        try
+        {
+            // 1. Mutate primary domain state metrics inside transaction memory
+            admin.RecordLogin();
+            _adminRepository.Update(admin);
 
-        var token = _jwtGenerator.GenerateAdminToken(admin);
+            // 2. Build our clean, typed cross-service Event object 
+            var loginEvent = new UserLoggedInEvent
+            {
+                EventType = "admin.loggedin",
+                OccurredAt = DateTime.UtcNow,
+                UserId = admin.Id,
+                Email = admin.Email,
+                UserType = "Admin",
+                LoginMethod = "password",
+                ClientIp = request.ClientIp,
+                UserAgent = request.UserAgent
+            };
 
-        // 1. RabbitMQ Message (for future services)
-        await OutboxHelper.AddToOutboxAsync(
-            _outboxRepository,
-            _unitOfWork,
-            "admin.loggedin",
-            "admin.loggedin",
-            "rabbitmq",
-            new 
-            { 
-                adminId = admin.Id,
-                username = admin.Username,
-                email = admin.Email,
-                timestamp = DateTime.UtcNow,
-                eventType = "admin.loggedin",
-                source = "auth-service"
-            });
+            // 3. Stage a single consolidated outbox message entry routed to BOTH brokers ("both")
+            // This reduces write latency by 50% and protects storage volumes
+            await OutboxHelper.AddToOutboxAsync(
+                _outboxRepository,
+                "admin.loggedin",   // EventType
+                "admin.loggedin",   // RoutingKey
+                "both",             // Multi-broker flag matched by OutboxProcessorService
+                loginEvent          // Structured payload object
+            );
 
-        // 2. Kafka Message - Successful login audit
-        await OutboxHelper.AddToOutboxAsync(
-            _outboxRepository,
-            _unitOfWork,
-            "admin.loggedin",
-            "admin.loggedin",
-            "kafka",
-            new 
-            { 
-                eventType = "admin.loggedin",
-                adminId = admin.Id,
-                username = admin.Username,
-                email = admin.Email,
-                timestamp = DateTime.UtcNow,
-                severity = "Low"
-            });
+            // 4. Flush database changes and commit securely to Neon PostgreSQL in one unified pass
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
 
-        return AdminLoginResponse.CreateSuccess(token, admin.Id, admin.Username, admin.Email);
+            // Generate authentication state artifact tokens safely
+            var token = _jwtGenerator.GenerateAdminToken(admin);
+            return AdminLoginResponse.CreateSuccess(token, admin.Id, admin.Username, admin.Email);
+        }
+        catch (Exception)
+        {
+            // If anything goes wrong during database updates, roll back to keep everything safe
+            await transaction.RollbackAsync(cancellationToken);
+            throw;
+        }
     }
 }

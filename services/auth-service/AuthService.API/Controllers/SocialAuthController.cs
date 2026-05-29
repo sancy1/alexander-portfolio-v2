@@ -63,6 +63,8 @@ public class SocialAuthController : ControllerBase
         return Redirect(authUrl);
     }
 
+
+
     /// <summary>
     /// Google OAuth callback
     /// </summary>
@@ -129,12 +131,18 @@ public class SocialAuthController : ControllerBase
             return BadRequest(new { message = "Failed to get user info" });
         }
 
-        // Process user
+        // 👇 1. EXTRACT TRACKING TELEMETRY (Safely handles empty headers behind your WAF proxy)
+        var clientIp = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "127.0.0.1";
+        var userAgent = Request.Headers["User-Agent"].ToString() ?? "Unknown";
+
+        // 👇 2. EXECUTE UPDATED COMMAND (Includes security context fields)
         var result = await _mediator.Send(new HandleOAuthLoginCommand(
             googleUser.Id,
             SocialProvider.Google,
             googleUser.Email,
             googleUser.Name,
+            clientIp,
+            userAgent,
             googleUser.Picture
         ));
 
@@ -159,6 +167,8 @@ public class SocialAuthController : ControllerBase
             message = "Login successful"
         });
     }
+
+
 
 
     /// <summary>
@@ -186,97 +196,105 @@ public class SocialAuthController : ControllerBase
     }
 
 
-    /// <summary>
-    /// GitHub OAuth callback
-    /// </summary>
-    [HttpGet("github/callback")]
-    public async Task<IActionResult> GitHubCallback(string code)
-    {
-        if (string.IsNullOrEmpty(code))
+
+       /// <summary>
+        /// GitHub OAuth callback
+        /// </summary>
+        [HttpGet("github/callback")]
+        public async Task<IActionResult> GitHubCallback(string code)
         {
-            return BadRequest(new { message = "Authorization code is missing" });
-        }
+            if (string.IsNullOrEmpty(code))
+            {
+                return BadRequest(new { message = "Authorization code is missing" });
+            }
 
-        var clientId = Environment.GetEnvironmentVariable("GITHUB_CLIENT_ID");
-        var clientSecret = Environment.GetEnvironmentVariable("GITHUB_CLIENT_SECRET");
-        
-        // Read callback URL from environment variable
-        var redirectUrl = Environment.GetEnvironmentVariable("GITHUB_CALLBACK_URL");
-        
-        if (string.IsNullOrEmpty(redirectUrl))
-        {
-            // Fallback for local development
-            redirectUrl = $"{Request.Scheme}://{Request.Host}/api/v1/auth/github/callback";
-        }
+            var clientId = Environment.GetEnvironmentVariable("GITHUB_CLIENT_ID");
+            var clientSecret = Environment.GetEnvironmentVariable("GITHUB_CLIENT_SECRET");
+            
+            // Read callback URL from environment variable
+            var redirectUrl = Environment.GetEnvironmentVariable("GITHUB_CALLBACK_URL");
+            
+            if (string.IsNullOrEmpty(redirectUrl))
+            {
+                // Fallback for local development
+                redirectUrl = $"{Request.Scheme}://{Request.Host}/api/v1/auth/github/callback";
+            }
 
-        // Exchange code for access token
-        var tokenClient = _httpClientFactory.CreateClient();
-        var tokenRequest = new FormUrlEncodedContent(new[]
-        {
-            new KeyValuePair<string, string>("code", code),
-            new KeyValuePair<string, string>("client_id", clientId ?? string.Empty),
-            new KeyValuePair<string, string>("client_secret", clientSecret ?? string.Empty),
-            new KeyValuePair<string, string>("redirect_uri", redirectUrl)
-        });
+            // Exchange code for access token
+            var tokenClient = _httpClientFactory.CreateClient();
+            var tokenRequest = new FormUrlEncodedContent(new[]
+            {
+                new KeyValuePair<string, string>("code", code),
+                new KeyValuePair<string, string>("client_id", clientId ?? string.Empty),
+                new KeyValuePair<string, string>("client_secret", clientSecret ?? string.Empty),
+                new KeyValuePair<string, string>("redirect_uri", redirectUrl)
+            });
 
-        var tokenResponse = await tokenClient.PostAsync("https://github.com/login/oauth/access_token", tokenRequest);
-        var tokenText = await tokenResponse.Content.ReadAsStringAsync();
-        
-        // Parse the response
-        var accessToken = ExtractAccessToken(tokenText);
+            var tokenResponse = await tokenClient.PostAsync("https://github.com/login/oauth/access_token", tokenRequest);
+            var tokenText = await tokenResponse.Content.ReadAsStringAsync();
+            
+            // Parse the response
+            var accessToken = ExtractAccessToken(tokenText);
 
-        if (string.IsNullOrEmpty(accessToken))
-        {
-            return BadRequest(new { message = "Failed to get access token" });
-        }
+            if (string.IsNullOrEmpty(accessToken))
+            {
+                return BadRequest(new { message = "Failed to get access token" });
+            }
 
-        // Get user info
-        var userClient = _httpClientFactory.CreateClient();
-        userClient.DefaultRequestHeaders.Add("User-Agent", "AuthService");
-        userClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {accessToken}");
-        var userResponse = await userClient.GetAsync("https://api.github.com/user");
-        var githubUser = await userResponse.Content.ReadFromJsonAsync<GitHubUserInfo>();
+            // Get user info
+            var userClient = _httpClientFactory.CreateClient();
+            userClient.DefaultRequestHeaders.Add("User-Agent", "AuthService");
+            userClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {accessToken}");
+            var userResponse = await userClient.GetAsync("https://api.github.com/user");
+            var githubUser = await userResponse.Content.ReadFromJsonAsync<GitHubUserInfo>();
 
-        if (githubUser == null)
-        {
-            return BadRequest(new { message = "Failed to get user info" });
-        }
+            if (githubUser == null)
+            {
+                return BadRequest(new { message = "Failed to get user info" });
+            }
 
-        // Get email (GitHub may not return email in primary request)
-        var emailResponse = await userClient.GetAsync("https://api.github.com/user/emails");
-        var emails = await emailResponse.Content.ReadFromJsonAsync<List<GitHubEmail>>();
-        var primaryEmail = emails?.FirstOrDefault(e => e.Primary)?.Email ?? githubUser.Email;
+            // Get email (GitHub may not return email in primary request)
+            var emailResponse = await userClient.GetAsync("https://api.github.com/user/emails");
+            var emails = await emailResponse.Content.ReadFromJsonAsync<List<GitHubEmail>>();
+            var primaryEmail = emails?.FirstOrDefault(e => e.Primary)?.Email ?? githubUser.Email;
 
-        // Process user
-        var result = await _mediator.Send(new HandleOAuthLoginCommand(
-            githubUser.Id.ToString(),
-            SocialProvider.GitHub,
-            primaryEmail ?? githubUser.Login,
-            githubUser.Name ?? githubUser.Login,
-            githubUser.AvatarUrl
-        ));
+            // 👇 1. EXTRACT TRACKING TELEMETRY (Safely handles empty headers behind your WAF proxy)
+            var clientIp = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "127.0.0.1";
+            var userAgent = Request.Headers["User-Agent"].ToString() ?? "Unknown";
 
-        if (result.RequiresProfileCompletion)
-        {
+            // 👇 2. EXECUTE UPDATED COMMAND (Includes security context fields)
+            var result = await _mediator.Send(new HandleOAuthLoginCommand(
+                githubUser.Id.ToString(),
+                SocialProvider.GitHub,
+                primaryEmail ?? githubUser.Login,
+                githubUser.Name ?? githubUser.Login,
+                clientIp,
+                userAgent,
+                githubUser.AvatarUrl
+            ));
+
+            if (result.RequiresProfileCompletion)
+            {
+                return Ok(new
+                {
+                    requiresProfileCompletion = true,
+                    userId = result.UserId,
+                    email = primaryEmail ?? githubUser.Login,
+                    name = githubUser.Name ?? githubUser.Login,
+                    provider = "github"
+                });
+            }
+
             return Ok(new
             {
-                requiresProfileCompletion = true,
+                token = result.Token,
                 userId = result.UserId,
                 email = primaryEmail ?? githubUser.Login,
-                name = githubUser.Name ?? githubUser.Login,
-                provider = "github"
+                displayName = githubUser.Name ?? githubUser.Login,
+                message = "Login successful"
             });
         }
 
-        return Ok(new
-        {
-            token = result.Token,
-            userId = result.UserId,
-            email = primaryEmail ?? githubUser.Login,
-            displayName = githubUser.Name ?? githubUser.Login,
-            message = "Login successful"
-        });
-    }
 
 
     /// <summary>

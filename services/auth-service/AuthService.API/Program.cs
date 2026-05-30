@@ -253,6 +253,8 @@ builder.Services.AddSwaggerGen(c =>
 });
 
 
+
+
 // Database Configuration - Read from .env
 var databaseUrl = Environment.GetEnvironmentVariable("DATABASE_URL")
     ?? builder.Configuration.GetValue<string>("Database:ConnectionString")
@@ -562,28 +564,103 @@ using (var scope = app.Services.CreateScope())
 // }
 
 
+
 // Configure pipeline
 // Always enable Swagger (including production)
-app.UseSwagger();
-app.UseSwaggerUI(c =>
-{
-    c.SwaggerEndpoint("/swagger/v1/swagger.json", "Auth Service API v1");
-    c.RoutePrefix = "swagger";
-});
 
-// Optional: Add security for Swagger in production
-if (!app.Environment.IsDevelopment())
+// ============================================================================
+// SWAGGER CONFIGURATION & SECURITY MIDDLEWARE (Gateway-Aware)
+// ============================================================================
+if (app.Environment.IsDevelopment() || true) // Forces Swagger to stay active on Render production
 {
-    // You can add basic auth or disable completely if concerned
-    // For now, let's keep it accessible for testing
+    // 👇 1. SECURE SWAGGER: Custom Basic Authentication Middleware
+    app.Use(async (context, next) =>
+    {
+        if (context.Request.Path.StartsWithSegments("/swagger"))
+        {
+            // Extract the credentials from Render Environment Variables safely
+            var expectedUser = Environment.GetEnvironmentVariable("SWAGGER_ADMIN_USER") ?? "admin-alexander";
+            var expectedPass = Environment.GetEnvironmentVariable("SWAGGER_ADMIN_PASSWORD") ?? "SecurePortfolio2026!";
+
+            string authHeader = context.Request.Headers["Authorization"];
+            if (authHeader != null && authHeader.StartsWith("Basic "))
+            {
+                try
+                {
+                    var encodedCredentials = authHeader.Substring(6).Trim();
+                    var credentials = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(encodedCredentials)).Split(':');
+                    if (credentials.Length == 2 && credentials[0] == expectedUser && credentials[1] == expectedPass)
+                    {
+                        await next.Invoke(); // Credentials match! Allow access.
+                        return;
+                    }
+                }
+                catch { /* Invalid base64 handling */ }
+            }
+
+            // Credentials missing or wrong -> Force browser login prompt popup box
+            context.Response.StatusCode = 401;
+            context.Response.Headers.Append("WWW-Authenticate", "Basic realm=\"Secure Swagger Documentation\"");
+            await context.Response.WriteAsync("Unauthorized access to API documentation.");
+            return;
+        }
+
+        await next.Invoke();
+    });
+
+    // 👇 2. GET GATEWAY URL FROM ENVIRONMENT VARIABLE (NO HARDCODING)
+    var gatewayUrl = Environment.GetEnvironmentVariable("GATEWAY_URL");
+    
+    // Fallback only for local development - NEVER use in production without env var
+    if (string.IsNullOrEmpty(gatewayUrl))
+    {
+        Console.WriteLine("WARNING: GATEWAY_URL environment variable not set. Using fallback URL.");
+        gatewayUrl = "https://alexander-portfolio-apigateway.onrender.com";
+    }
+    
+    Console.WriteLine($"Swagger using Gateway URL: {gatewayUrl}");
+
+    app.UseSwagger(options =>
+    {
+        options.PreSerializeFilters.Add((swaggerDoc, httpReq) =>
+        {
+            // Tells Swagger to display your API Gateway domain instead of internal Render URLs
+            swaggerDoc.Servers = new List<Microsoft.OpenApi.Models.OpenApiServer>
+            {
+                new() { Url = gatewayUrl }
+            };
+        });
+    });
+
+    app.UseSwaggerUI(options =>
+    {
+        options.SwaggerEndpoint($"{gatewayUrl}/swagger/v1/swagger.json", "AuthService API v1");
+        options.RoutePrefix = "swagger";
+    });
 }
+
 
 // app.UseSwagger();
 // app.UseSwaggerUI(c =>
 // {
-//     c.SwaggerEndpoint("/swagger/v1/swagger.json", "AuthService API v1");
+//     c.SwaggerEndpoint("/swagger/v1/swagger.json", "Auth Service API v1");
 //     c.RoutePrefix = "swagger";
 // });
+
+// // Optional: Add security for Swagger in production
+// if (!app.Environment.IsDevelopment())
+// {
+//     // You can add basic auth or disable completely if concerned
+//     // For now, let's keep it accessible for testing
+// }
+
+// // app.UseSwagger();
+// // app.UseSwaggerUI(c =>
+// // {
+// //     c.SwaggerEndpoint("/swagger/v1/swagger.json", "AuthService API v1");
+// //     c.RoutePrefix = "swagger";
+// // });
+
 
 
 app.UseHttpsRedirection();

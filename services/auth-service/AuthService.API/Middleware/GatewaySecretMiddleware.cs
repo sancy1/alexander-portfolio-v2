@@ -10,7 +10,9 @@ public class GatewaySecretMiddleware
     private static readonly string[] BypassPaths =
     [
         "/health",
-        "/api/v1/health"
+        "/api/v1/health",
+        "/swagger",
+        "/swagger/"
     ];
 
     public GatewaySecretMiddleware(

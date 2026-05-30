@@ -569,18 +569,38 @@ using (var scope = app.Services.CreateScope())
 // Always enable Swagger (including production)
 
 // ============================================================================
-// SWAGGER CONFIGURATION & SECURITY MIDDLEWARE (Gateway-Aware)
+// SWAGGER CONFIGURATION - PRODUCTION READY WITH BASIC AUTH
 // ============================================================================
-if (app.Environment.IsDevelopment() || true) // Forces Swagger to stay active on Render production
+// Only enable Swagger if explicitly configured (not just for development)
+var enableSwagger = Environment.GetEnvironmentVariable("ENABLE_SWAGGER") == "true";
+
+if (enableSwagger)
 {
-    // 👇 1. SECURE SWAGGER: Custom Basic Authentication Middleware
+    // 👇 SECURE SWAGGER: Custom Basic Authentication Middleware (NO FALLBACK)
     app.Use(async (context, next) =>
     {
         if (context.Request.Path.StartsWithSegments("/swagger"))
         {
-            // Extract the credentials from Render Environment Variables safely
-            var expectedUser = Environment.GetEnvironmentVariable("SWAGGER_ADMIN_USER") ?? "admin-alexander";
-            var expectedPass = Environment.GetEnvironmentVariable("SWAGGER_ADMIN_PASSWORD") ?? "SecurePortfolio2026!";
+            // CRITICAL: Allow swagger.json to load without authentication
+            // The UI authenticates once, but needs to fetch the JSON file separately
+            if (context.Request.Path.Value?.EndsWith("swagger.json") == true)
+            {
+                await next.Invoke();
+                return;
+            }
+
+            // NO FALLBACK - MUST be set in environment variables
+            var expectedUser = Environment.GetEnvironmentVariable("SWAGGER_ADMIN_USER");
+            var expectedPass = Environment.GetEnvironmentVariable("SWAGGER_ADMIN_PASSWORD");
+            
+            // If credentials not set in environment, block all access
+            if (string.IsNullOrEmpty(expectedUser) || string.IsNullOrEmpty(expectedPass))
+            {
+                context.Response.StatusCode = 500;
+                context.Response.ContentType = "text/plain";
+                await context.Response.WriteAsync("Swagger access is not configured. Contact administrator.");
+                return;
+            }
 
             string authHeader = context.Request.Headers["Authorization"];
             if (authHeader != null && authHeader.StartsWith("Basic "))
@@ -591,16 +611,17 @@ if (app.Environment.IsDevelopment() || true) // Forces Swagger to stay active on
                     var credentials = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(encodedCredentials)).Split(':');
                     if (credentials.Length == 2 && credentials[0] == expectedUser && credentials[1] == expectedPass)
                     {
-                        await next.Invoke(); // Credentials match! Allow access.
+                        await next.Invoke();
                         return;
                     }
                 }
                 catch { /* Invalid base64 handling */ }
             }
 
-            // Credentials missing or wrong -> Force browser login prompt popup box
+            // Credentials missing or wrong
             context.Response.StatusCode = 401;
             context.Response.Headers.Append("WWW-Authenticate", "Basic realm=\"Secure Swagger Documentation\"");
+            context.Response.ContentType = "text/plain";
             await context.Response.WriteAsync("Unauthorized access to API documentation.");
             return;
         }
@@ -608,14 +629,23 @@ if (app.Environment.IsDevelopment() || true) // Forces Swagger to stay active on
         await next.Invoke();
     });
 
-    // 👇 2. GET GATEWAY URL FROM ENVIRONMENT VARIABLE (NO HARDCODING)
+    // 👇 GET GATEWAY URL FROM ENVIRONMENT VARIABLE (NO HARDCODING)
     var gatewayUrl = Environment.GetEnvironmentVariable("GATEWAY_URL");
     
-    // Fallback only for local development - NEVER use in production without env var
     if (string.IsNullOrEmpty(gatewayUrl))
     {
-        Console.WriteLine("WARNING: GATEWAY_URL environment variable not set. Using fallback URL.");
-        gatewayUrl = "https://alexander-portfolio-apigateway.onrender.com";
+        // Only use fallback in development - production MUST have env var
+        if (app.Environment.IsDevelopment())
+        {
+            gatewayUrl = "https://localhost:7001";
+            Console.WriteLine("WARNING: GATEWAY_URL not set. Using localhost for development.");
+        }
+        else
+        {
+            Console.WriteLine("ERROR: GATEWAY_URL environment variable is required in production.");
+            // Don't start Swagger without it
+            throw new Exception("GATEWAY_URL environment variable not set");
+        }
     }
     
     Console.WriteLine($"Swagger using Gateway URL: {gatewayUrl}");
@@ -624,7 +654,6 @@ if (app.Environment.IsDevelopment() || true) // Forces Swagger to stay active on
     {
         options.PreSerializeFilters.Add((swaggerDoc, httpReq) =>
         {
-            // Tells Swagger to display your API Gateway domain instead of internal Render URLs
             swaggerDoc.Servers = new List<Microsoft.OpenApi.Models.OpenApiServer>
             {
                 new() { Url = gatewayUrl }

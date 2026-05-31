@@ -34,7 +34,6 @@ using Microsoft.Extensions.Caching.Distributed;
 
 
 
-
 // ============================================================================
 // TEMPORARY: Detect Outbound IP for Aiven Redis Allowlist
 // ============================================================================
@@ -448,35 +447,70 @@ builder.Services.AddScoped<IMessagePublisher, RabbitMQPublisher>();
 // The subscriber background consumer worker threads run continuously on startup
 builder.Services.AddHostedService<RabbitMQSubscriber>();
 
+
+
+// ============================================================================
+// KAFKA SETUP (The Archive - Side by Side with RabbitMQ)
+// ============================================================================
+var kafkaBootstrap = Environment.GetEnvironmentVariable("KAFKA_BOOTSTRAP_SERVERS");
+var kafkaUsername = Environment.GetEnvironmentVariable("KAFKA_USERNAME");
+var kafkaPassword = Environment.GetEnvironmentVariable("KAFKA_PASSWORD");
+
+if (!string.IsNullOrEmpty(kafkaBootstrap) && !kafkaBootstrap.Contains("localhost"))
+{
+    builder.Services.Configure<KafkaSettings>(options =>
+    {
+        options.BootstrapServers = kafkaBootstrap;
+        options.Username = kafkaUsername;
+        options.Password = kafkaPassword;
+        options.TopicPrefix = "auth";
+        options.ConsumerGroupId = "auth-service-group";
+    });
+
+    // 🧠 Rules Applied: Strict Singleton registration to prevent unmanaged native memory leaks
+    builder.Services.AddSingleton<IKafkaProducer, KafkaProducer>();
+    
+    // 🏗️ Rules Applied: Isolated hosted background worker loop running separate from RabbitMQ
+    builder.Services.AddHostedService<KafkaConsumer>();
+    
+    Console.WriteLine($"✅ Kafka archive engine successfully registered: {kafkaBootstrap}");
+}
+else
+{
+    Console.WriteLine("⚠️ Kafka environment parameters absent - Archive engine operating in Graceful Degradation mode.");
+    
+    // Injecting the No-Op fallback component prevents dependency injection resolution breakages
+    builder.Services.AddSingleton<IKafkaProducer, NullKafkaProducer>();
+}
+
+// ============================================================================
+// GRACEFUL DEGRADATION ARCHIVE INTERCEPTOR LAYER
+// ============================================================================
+/// <summary>
+/// No-Op concrete fallback representation of the Archive pattern when Kafka is unavailable.
+/// </summary>
+public sealed class NullKafkaProducer : IKafkaProducer
+{
+    public Task ProduceAsync(string topic, string payload, CancellationToken cancellationToken = default) 
+        => Task.CompletedTask;
+
+    public Task ProduceAsync<T>(string topic, T payload, CancellationToken cancellationToken = default) where T : class 
+        => Task.CompletedTask;
+
+    public Task ProduceAuditLogAsync<T>(T auditLog, CancellationToken cancellationToken = default) where T : class 
+        => Task.CompletedTask;
+}
+
+
+
+
+
+
 // ============================================================================
 // 3. BACKGROUND TASK ENGINES (OUTBOX WORKERS)
 // ============================================================================
 // 👇 Registers your outbox poller cleanly as a single native background runtime thread
 builder.Services.AddHostedService<OutboxProcessorService>();
-
-
-
-
-
-
-// Kafka Configuration
-var kafkaSettings = new KafkaSettings
-{
-    BootstrapServers = Environment.GetEnvironmentVariable("KAFKA_BOOTSTRAP_SERVERS") ?? "localhost:9092"
-};
-builder.Services.Configure<KafkaSettings>(options =>
-{
-    options.BootstrapServers = kafkaSettings.BootstrapServers;
-});
-
-// Register messaging services
-builder.Services.AddSingleton<IMessagePublisher, RabbitMQPublisher>();
-builder.Services.AddSingleton<IKafkaProducer, KafkaProducer>();
-// builder.Services.AddHostedService<RabbitMQSubscriber>();
-// builder.Services.AddHostedService<KafkaConsumer>();
-
-
-
 
 
 var app = builder.Build();

@@ -1,3 +1,6 @@
+
+// File: services/auth-service/AuthService.Infrastructure/Messaging/RabbitMQSettings.cs
+
 using System;
 using System.Threading;
 using System.Threading.Tasks;

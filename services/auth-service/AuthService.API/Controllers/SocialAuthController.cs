@@ -326,6 +326,8 @@ public class SocialAuthController : ControllerBase
     }
 
     
+
+
     /// <summary>
     /// Get social user profile (requires authentication)
     /// </summary>
@@ -357,13 +359,26 @@ public class SocialAuthController : ControllerBase
             provider = user.Provider.ToString(),
             isProfileComplete = user.IsProfileComplete,
             createdAt = user.CreatedAt,
-            lastLoginAt = user.LastLoginAt
+            lastLoginAt = user.LastLoginAt,
+
+            // ============================================================================
+            // UPDATED: Added these new fields to the existing GetProfile return payload
+            // ============================================================================
+            fullName = user.FullName,
+            jobTitle = user.JobTitle,
+            headline = user.Headline,
+            tagline = user.Tagline,
+            bio = user.Bio,
+            phone = user.Phone,
+            location = user.Location,
+            website = user.Website,
+            socialLinks = string.IsNullOrEmpty(user.SocialLinks) 
+                ? null 
+                : System.Text.Json.JsonSerializer.Deserialize<object>(user.SocialLinks)
         });
     }
 
-    
-    
-    
+
     /// <summary>
     /// Update social user profile (display name only)
     /// </summary>
@@ -405,6 +420,51 @@ public class SocialAuthController : ControllerBase
             avatarUrl = user.AvatarUrl
         });
     }
+
+
+
+        /// <summary>
+        /// Update social user public portfolio profile (bio, headline, links, etc.)
+        /// </summary>
+        [HttpPut("users/public-profile")]
+        [Authorize]
+        public async Task<IActionResult> UpdatePublicProfile([FromBody] UpdatePublicProfileRequest request)
+        {
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            
+            if (string.IsNullOrEmpty(userIdClaim))
+            {
+                return Unauthorized(new { message = "Invalid token" });
+            }
+
+            var userId = Guid.Parse(userIdClaim);
+            
+            // 🧠 Discipline Applied: Wrap inputs inside a MediatR command to trigger our outbox handler!
+            var command = new UpdateSocialPublicProfileCommand(
+                userId,
+                request.FullName,
+                request.JobTitle,
+                request.Headline,
+                request.Tagline,
+                request.Bio,
+                request.Phone,
+                request.Location,
+                request.Website,
+                request.SocialLinks
+            );
+
+            var result = await _mediator.Send(command);
+
+            if (!result.Success)
+            {
+                return result.Message.Contains("not found", StringComparison.OrdinalIgnoreCase)
+                    ? NotFound(new { message = result.Message })
+                    : BadRequest(new { message = result.Message });
+            }
+
+            return Ok(result);
+    }
+
 
 
 

@@ -12,11 +12,9 @@ using AuthService.Application.Features.Admin.Commands;
 using AuthService.Application.Features.Admin.Queries;
 using AuthService.Application.Validators;
 using AuthService.Application.Interfaces.Persistence;
-using AuthService.Domain.Enums;
-
 using AuthService.Application.Common;
 using AuthService.Application.DTOs.Events;
-using AuthService.Application.Interfaces.Persistence;
+using AuthService.Domain.Enums;
 
 namespace AuthService.API.Controllers;
 
@@ -34,7 +32,7 @@ public class AdminAuthController : ControllerBase
     private readonly IUnitOfWork _unitOfWork;
 
     public AdminAuthController(
-        IMediator mediator, 
+        IMediator mediator,
         AdminRegisterValidator registerValidator,
         AdminLoginValidator loginValidator,
         IAdminRepository adminRepository,
@@ -50,7 +48,6 @@ public class AdminAuthController : ControllerBase
         _outboxRepository = outboxRepository;
         _unitOfWork = unitOfWork;
     }
-    
 
     /// <summary>
     /// Register a new admin account
@@ -92,51 +89,47 @@ public class AdminAuthController : ControllerBase
         });
     }
 
-        /// <summary>
-        /// Login as an admin
-        /// </summary>
-        [HttpPost("login")]
-        [ProducesResponseType(StatusCodes.Status200OK)]
-        [ProducesResponseType(StatusCodes.Status400BadRequest)]
-        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-        public async Task<IActionResult> Login([FromBody] AdminLoginRequest request)
+    /// <summary>
+    /// Login as an admin
+    /// </summary>
+    [HttpPost("login")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> Login([FromBody] AdminLoginRequest request)
+    {
+        var validationResult = await _loginValidator.ValidateAsync(request);
+        if (!validationResult.IsValid)
         {
-            var validationResult = await _loginValidator.ValidateAsync(request);
-            if (!validationResult.IsValid)
+            return BadRequest(new
             {
-                return BadRequest(new
-                {
-                    errors = validationResult.Errors.Select(e => new { e.PropertyName, e.ErrorMessage })
-                });
-            }
-
-            // 👇 1. EXTRACT TRACKING HEADERS (Safely falls back if behind Nginx empty headers)
-            var clientIp = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "127.0.0.1";
-            var userAgent = Request.Headers["User-Agent"].ToString() ?? "Unknown";
-
-            // 👇 2. UPDATE COMMAND CALL (Passes the extra parameters down to your atomic handler)
-            var command = new LoginAdminCommand(request.Username, request.Password, clientIp, userAgent);
-            var result = await _mediator.Send(command);
-
-            if (!result.Success)
-            {
-                return Unauthorized(new { message = result.Message });
-            }
-
-            return Ok(new
-            {
-                token = result.Token,
-                adminId = result.AdminId,
-                username = result.Username,
-                email = result.Email,
-                message = "Login successful"
+                errors = validationResult.Errors.Select(e => new { e.PropertyName, e.ErrorMessage })
             });
         }
 
+        var clientIp = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "127.0.0.1";
+        var userAgent = Request.Headers["User-Agent"].ToString() ?? "Unknown";
 
+        var command = new LoginAdminCommand(request.Username, request.Password, clientIp, userAgent);
+        var result = await _mediator.Send(command);
+
+        if (!result.Success)
+        {
+            return Unauthorized(new { message = result.Message });
+        }
+
+        return Ok(new
+        {
+            token = result.Token,
+            adminId = result.AdminId,
+            username = result.Username,
+            email = result.Email,
+            message = "Login successful"
+        });
+    }
 
     /// <summary>
-    /// Logout an admin (client discards the token)
+    /// Logout an admin (blacklists the token in Redis)
     /// </summary>
     [HttpPost("logout")]
     [Authorize]
@@ -146,7 +139,7 @@ public class AdminAuthController : ControllerBase
     {
         var authHeader = Request.Headers["Authorization"].ToString();
         var token = authHeader.Replace("Bearer ", "");
-        
+
         if (string.IsNullOrEmpty(token))
         {
             return Unauthorized(new { message = "No token provided" });
@@ -164,7 +157,7 @@ public class AdminAuthController : ControllerBase
     }
 
     /// <summary>
-    /// Get admin profile (requires authentication)
+    /// Get admin profile including extended public metadata fields
     /// </summary>
     [HttpGet("profile")]
     [Authorize]
@@ -174,7 +167,7 @@ public class AdminAuthController : ControllerBase
     public async Task<IActionResult> GetProfile()
     {
         var adminIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        
+
         if (string.IsNullOrEmpty(adminIdClaim))
         {
             return Unauthorized(new { message = "Invalid token" });
@@ -195,15 +188,29 @@ public class AdminAuthController : ControllerBase
             username = result.Username,
             email = result.Email,
             role = result.Role,
+            avatarUrl = result.AvatarUrl,
+            status = result.Status,
             createdAt = result.CreatedAt,
             lastLoginAt = result.LastLoginAt,
             updatedAt = result.UpdatedAt,
-            avatarUrl = result.AvatarUrl
+
+            // Extended portfolio profile fields
+            fullName = result.FullName,
+            jobTitle = result.JobTitle,
+            headline = result.Headline,
+            tagline = result.Tagline,
+            bio = result.Bio,
+            phone = result.Phone,
+            location = result.Location,
+            website = result.Website,
+            socialLinks = string.IsNullOrEmpty(result.SocialLinks)
+                ? null
+                : System.Text.Json.JsonSerializer.Deserialize<object>(result.SocialLinks)
         });
     }
 
     /// <summary>
-    /// Update admin profile (username or email)
+    /// Update core admin account credentials (username or email)
     /// </summary>
     [HttpPut("profile")]
     [Authorize]
@@ -213,7 +220,7 @@ public class AdminAuthController : ControllerBase
     public async Task<IActionResult> UpdateProfile([FromBody] UpdateAdminProfileRequest request)
     {
         var adminIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        
+
         if (string.IsNullOrEmpty(adminIdClaim))
         {
             return Unauthorized(new { message = "Invalid token" });
@@ -230,9 +237,104 @@ public class AdminAuthController : ControllerBase
 
         return Ok(new
         {
-            message = "Profile updated successfully",
+            message = "Account credentials updated successfully",
             username = result.Username,
             email = result.Email
+        });
+    }
+
+    /// <summary>
+    /// Update extended admin public display profile (bio, social links, showcase details)
+    /// </summary>
+    [HttpPut("public-profile")]
+    [Authorize]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> UpdatePublicProfile([FromBody] UpdatePublicProfileRequest request)
+    {
+        var adminIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+
+        if (string.IsNullOrEmpty(adminIdClaim))
+        {
+            return Unauthorized(new { message = "Invalid token" });
+        }
+
+        var adminId = Guid.Parse(adminIdClaim);
+        var admin = await _adminRepository.GetByIdAsync(adminId);
+
+        if (admin == null)
+        {
+            return NotFound(new { message = "Admin not found" });
+        }
+
+        string? socialLinksJson = null;
+        if (request.SocialLinks != null)
+        {
+            socialLinksJson = System.Text.Json.JsonSerializer.Serialize(
+                request.SocialLinks,
+                new System.Text.Json.JsonSerializerOptions
+                {
+                    PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
+                });
+        }
+
+        admin.UpdatePublicProfile(
+            request.FullName,
+            request.JobTitle,
+            request.Headline,
+            request.Tagline,
+            request.Bio,
+            request.Phone,
+            request.Location,
+            request.Website,
+            socialLinksJson
+        );
+
+        _adminRepository.Update(admin);
+
+        var profileEvent = new
+        {
+            eventType = "admin.public_profile_updated",
+            adminId = admin.Id,
+            username = admin.Username,
+            timestamp = DateTime.UtcNow
+        };
+
+        await OutboxHelper.AddToOutboxAsync(
+            _outboxRepository,
+            "admin.profile_updated",
+            "admin.profile_updated",
+            "rabbitmq",
+            profileEvent);
+
+        await OutboxHelper.AddToOutboxAsync(
+            _outboxRepository,
+            "auth-events",
+            "admin.profile_updated",
+            "kafka",
+            profileEvent);
+
+        await _unitOfWork.SaveChangesAsync();
+
+        return Ok(new
+        {
+            message = "Public profile updated successfully",
+            profile = new
+            {
+                admin.FullName,
+                admin.JobTitle,
+                admin.Headline,
+                admin.Tagline,
+                admin.Bio,
+                admin.Phone,
+                admin.Location,
+                admin.Website,
+                SocialLinks = string.IsNullOrEmpty(admin.SocialLinks)
+                    ? null
+                    : System.Text.Json.JsonSerializer.Deserialize<object>(admin.SocialLinks)
+            }
         });
     }
 
@@ -253,7 +355,7 @@ public class AdminAuthController : ControllerBase
         }
 
         var adminIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        
+
         if (string.IsNullOrEmpty(adminIdClaim))
         {
             return Unauthorized(new { message = "Invalid token" });
@@ -261,11 +363,11 @@ public class AdminAuthController : ControllerBase
 
         var adminId = Guid.Parse(adminIdClaim);
         var command = new UploadAvatarCommand(adminId, file);
-        
+
         try
         {
             var result = await _mediator.Send(command);
-            
+
             if (result == null)
             {
                 return NotFound(new { message = "Admin not found" });
@@ -287,17 +389,19 @@ public class AdminAuthController : ControllerBase
         }
     }
 
-
     /// <summary>
     /// Change admin password (requires current password)
     /// </summary>
     [HttpPut("change-password")]
     [Authorize]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequest request)
     {
         var validator = new ChangePasswordValidator();
         var validationResult = await validator.ValidateAsync(request);
-        
+
         if (!validationResult.IsValid)
         {
             return BadRequest(new
@@ -307,7 +411,7 @@ public class AdminAuthController : ControllerBase
         }
 
         var adminIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        
+
         if (string.IsNullOrEmpty(adminIdClaim))
         {
             return Unauthorized(new { message = "Invalid token" });
@@ -325,8 +429,6 @@ public class AdminAuthController : ControllerBase
         return Ok(new { message = "Password changed successfully" });
     }
 
-
-
     /// <summary>
     /// Reset forgotten password using Admin Secret Key
     /// </summary>
@@ -338,7 +440,7 @@ public class AdminAuthController : ControllerBase
     {
         var validator = new ResetPasswordValidator();
         var validationResult = await validator.ValidateAsync(request);
-        
+
         if (!validationResult.IsValid)
         {
             return BadRequest(new
@@ -358,13 +460,14 @@ public class AdminAuthController : ControllerBase
         return Ok(new { message = "Password reset successfully" });
     }
 
-
-
     /// <summary>
     /// Delete admin account (Soft delete - 30 days reversible OR Hard delete - immediate permanent)
     /// </summary>
     [HttpDelete("account")]
     [Authorize]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> DeleteAccount([FromBody] DeleteAccountRequest request)
     {
         if (string.IsNullOrEmpty(request.ConfirmUsername))
@@ -373,7 +476,7 @@ public class AdminAuthController : ControllerBase
         }
 
         var adminIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        
+
         if (string.IsNullOrEmpty(adminIdClaim))
         {
             return Unauthorized(new { message = "Invalid token" });
@@ -400,7 +503,7 @@ public class AdminAuthController : ControllerBase
     /// Restore a soft-deleted account (only works within 30 days)
     /// </summary>
     [HttpPost("account/restore")]
-    [AllowAnonymous]  // No authentication required
+    [AllowAnonymous]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -432,10 +535,13 @@ public class AdminAuthController : ControllerBase
     /// </summary>
     [HttpGet("account/status")]
     [Authorize]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetAccountStatus()
     {
         var adminIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        
+
         if (string.IsNullOrEmpty(adminIdClaim))
         {
             return Unauthorized(new { message = "Invalid token" });
@@ -459,30 +565,14 @@ public class AdminAuthController : ControllerBase
         });
     }
 
-
-
     /// <summary>
     /// Admin: Delete a social user account (for violations)
     /// </summary>
-    /// <remarks>
-    /// Allows admin to forcibly delete or deactivate social user accounts.
-    /// 
-    /// Sample request (Soft Delete - 30 days):
-    /// {
-    ///     "userId": "9af8d9e4-6e43-45be-a0ff-d781526cfc9f",
-    ///     "reason": "Violation of community guidelines",
-    ///     "permanentDelete": false
-    /// }
-    /// 
-    /// Sample request (Hard Delete - Permanent):
-    /// {
-    ///     "userId": "9af8d9e4-6e43-45be-a0ff-d781526cfc9f",
-    ///     "reason": "Spam account",
-    ///     "permanentDelete": true
-    /// }
-    /// </remarks>
     [HttpDelete("admin/social-users/{userId}")]
     [Authorize(Roles = "Admin,SuperAdmin")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> AdminDeleteSocialUser(Guid userId, [FromBody] AdminDeleteSocialUserRequest request)
     {
         if (string.IsNullOrEmpty(request.Reason))
@@ -506,13 +596,14 @@ public class AdminAuthController : ControllerBase
         });
     }
 
-
-
     /// <summary>
-    /// Admin: Block a social user account (prevents self-restore)
+    /// Admin: Block a social user account
     /// </summary>
     [HttpPost("admin/social-users/{userId}/block")]
     [Authorize(Roles = "Admin,SuperAdmin")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> AdminBlockSocialUser(Guid userId, [FromBody] AdminBlockSocialUserRequest request)
     {
         if (string.IsNullOrEmpty(request.Reason))
@@ -532,10 +623,13 @@ public class AdminAuthController : ControllerBase
     }
 
     /// <summary>
-    /// Admin: Unblock a social user account (allows self-restore again)
+    /// Admin: Unblock a social user account
     /// </summary>
     [HttpPost("admin/social-users/{userId}/unblock")]
     [Authorize(Roles = "Admin,SuperAdmin")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> AdminUnblockSocialUser(Guid userId)
     {
         var command = new AdminUnblockSocialUserCommand(userId);
@@ -549,18 +643,13 @@ public class AdminAuthController : ControllerBase
         return Ok(new { message = "User has been unblocked. User can now self-restore if account is soft-deleted." });
     }
 
-
     /// <summary>
     /// Admin: Get all social users with pagination and filters
     /// </summary>
-    /// <param name="page">Page number (starts at 1)</param>
-    /// <param name="pageSize">Items per page (default 20, max 100)</param>
-    /// <param name="search">Search by email or display name</param>
-    /// <param name="provider">Filter by provider (google, github)</param>
-    /// <param name="isBlocked">Filter by blocked status</param>
-    /// <param name="isDeleted">Filter by deleted status</param>
     [HttpGet("admin/social-users")]
     [Authorize(Roles = "Admin,SuperAdmin")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> GetAllSocialUsers(
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
@@ -609,10 +698,13 @@ public class AdminAuthController : ControllerBase
     /// </summary>
     [HttpGet("admin/social-users/{userId}")]
     [Authorize(Roles = "Admin,SuperAdmin")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetSocialUserById(Guid userId)
     {
         var user = await _socialUserRepository.GetByIdAsync(userId);
-        
+
         if (user == null)
         {
             return NotFound(new { message = "User not found" });
@@ -644,10 +736,12 @@ public class AdminAuthController : ControllerBase
     /// </summary>
     [HttpGet("admin/social-users/blocked/list")]
     [Authorize(Roles = "Admin,SuperAdmin")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> GetBlockedSocialUsers()
     {
         var users = await _socialUserRepository.GetBlockedUsersAsync();
-        
+
         return Ok(new
         {
             count = users.Count,
@@ -663,17 +757,19 @@ public class AdminAuthController : ControllerBase
     }
 
     /// <summary>
-    /// Admin: Get recently active social users (last N days)
+    /// Admin: Get recently active social users
     /// </summary>
     [HttpGet("admin/social-users/active/recent")]
     [Authorize(Roles = "Admin,SuperAdmin")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> GetRecentlyActiveUsers([FromQuery] int days = 7)
     {
         if (days < 1) days = 1;
         if (days > 90) days = 90;
 
         var users = await _socialUserRepository.GetRecentlyActiveAsync(days);
-        
+
         return Ok(new
         {
             days,
@@ -694,14 +790,14 @@ public class AdminAuthController : ControllerBase
     /// </summary>
     [HttpGet("admin/social-users/stats/summary")]
     [Authorize(Roles = "Admin,SuperAdmin")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> GetSocialUsersStats()
     {
         var totalCount = await _socialUserRepository.GetTotalCountAsync();
         var blockedCount = await _socialUserRepository.GetTotalCountAsync(isBlocked: true);
         var deletedCount = await _socialUserRepository.GetTotalCountAsync(isDeleted: true);
         var activeCount = await _socialUserRepository.GetTotalCountAsync(isDeleted: false, isBlocked: false);
-        
-        // Get counts by provider
         var googleCount = await _socialUserRepository.GetTotalCountAsync(provider: "google");
         var githubCount = await _socialUserRepository.GetTotalCountAsync(provider: "github");
 
@@ -720,36 +816,33 @@ public class AdminAuthController : ControllerBase
         });
     }
 
-
-
-   /// <summary>
+    /// <summary>
     /// Admin: Update social user state (activate, deactivate, update details)
     /// </summary>
     [HttpPut("admin/social-users/{userId}")]
     [Authorize(Roles = "Admin,SuperAdmin")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> UpdateSocialUserState(Guid userId, [FromBody] AdminUpdateSocialUserRequest request)
     {
         var user = await _socialUserRepository.GetByIdAsync(userId);
-        
+
         if (user == null)
         {
             return NotFound(new { message = "User not found" });
         }
 
-        var adminIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         var adminUsername = User.FindFirst(ClaimTypes.Name)?.Value ?? "admin";
-
-        // Track what changed for the event
         var action = "updated";
 
-        // Update display name if provided
         if (!string.IsNullOrEmpty(request.DisplayName) && request.DisplayName != user.DisplayName)
         {
             user.UpdateProfile(request.DisplayName, user.AvatarUrl);
             action = "profile_updated";
         }
 
-        // Update status (activate/deactivate)
         if (request.IsActive.HasValue)
         {
             if (request.IsActive.Value && user.Status != AccountStatus.Active)
@@ -767,7 +860,6 @@ public class AdminAuthController : ControllerBase
         _socialUserRepository.Update(user);
         await _unitOfWork.SaveChangesAsync();
 
-        // Send user.modified event to RabbitMQ via Outbox
         await OutboxHelper.AddToOutboxAsync(
             _outboxRepository,
             _unitOfWork,
@@ -802,6 +894,4 @@ public class AdminAuthController : ControllerBase
             }
         });
     }
-
-    
 }

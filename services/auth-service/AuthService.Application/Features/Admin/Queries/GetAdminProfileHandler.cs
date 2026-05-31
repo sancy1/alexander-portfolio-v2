@@ -1,4 +1,6 @@
 using MediatR;
+using System.Threading;
+using System.Threading.Tasks;
 using AuthService.Application.DTOs.Responses;
 using AuthService.Application.Interfaces.Persistence;
 
@@ -31,7 +33,18 @@ public class GetAdminProfileHandler : IRequestHandler<GetAdminProfileQuery, Admi
             CreatedAt = admin.CreatedAt,
             LastLoginAt = admin.LastLoginAt,
             UpdatedAt = admin.UpdatedAt,
-            AvatarUrl = admin.AvatarUrl  // ADD THIS LINE
+            AvatarUrl = admin.AvatarUrl,  // 🔐 Fixed: Added missing comma here to prevent compilation crash!
+
+            // Map the newly integrated database parameters to the response context contract
+            FullName = admin.FullName,
+            JobTitle = admin.JobTitle,
+            Headline = admin.Headline,
+            Tagline = admin.Tagline,
+            Bio = admin.Bio,
+            Phone = admin.Phone,
+            Location = admin.Location,
+            Website = admin.Website,
+            SocialLinks = admin.SocialLinks
         };
     }
 }

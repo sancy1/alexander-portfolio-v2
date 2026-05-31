@@ -184,7 +184,7 @@ public sealed class KafkaConsumer : BackgroundService
         _logger.LogInformation("Processing incoming reference event logic for tracking key: {Id}", entityId);
 
         // 2. Intercept with Redis Layer first to achieve full Database Protection
-        if (redis is not Birdge && redis != null)
+        if (redis != null)
         {
             var cacheKey = $"{_settings.TopicPrefix}:references:{entityId}";
             var cacheDb = redis.GetDatabase();

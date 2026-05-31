@@ -30,7 +30,12 @@ EXPOSE 8080
 # Install curl for health checks (optional but recommended)
 RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 
+# Copy the published application assets from the build container
 COPY --from=build /app/publish .
+
+# 🔐 Rules Applied: Embed the downloaded Aiven CA Certificate into the final runtime container
+# This copies ca.pem directly from your build context into the root of /app
+COPY ca.pem /app/ca.pem
 
 ENV ASPNETCORE_URLS=http://+:8080
 ENV ASPNETCORE_ENVIRONMENT=Production

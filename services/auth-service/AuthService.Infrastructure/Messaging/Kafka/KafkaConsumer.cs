@@ -61,6 +61,7 @@ public sealed class KafkaConsumer : BackgroundService
                 SaslMechanism = saslMechanism,
                 SaslUsername = _settings.Username,
                 SaslPassword = _settings.Password,
+                SslCaLocation = "/app/ca.pem",
                 MaxPartitionFetchBytes = _settings.MaxPartitionFetchBytes,
                 MaxPollIntervalMs = 300000,
                 SessionTimeoutMs = 45000,

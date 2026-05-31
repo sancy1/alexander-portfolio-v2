@@ -46,7 +46,7 @@ public sealed class KafkaProducer : IKafkaProducer, IAsyncDisposable
                 SaslMechanism = saslMechanism,
                 SaslUsername = _settings.Username,
                 SaslPassword = _settings.Password,
-                SslCaLocation = "/app/ca.pem"
+                SslCaLocation = "/app/ca.pem",
                 ClientId = "auth-service",
                 EnableIdempotence = true,
                 Acks = Acks.All,

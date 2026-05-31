@@ -450,11 +450,15 @@ builder.Services.AddHostedService<RabbitMQSubscriber>();
 
 
 // ============================================================================
-// KAFKA SETUP (The Archive - Side by Side with RabbitMQ)
+// KAFKA SETUP
 // ============================================================================
 var kafkaBootstrap = Environment.GetEnvironmentVariable("KAFKA_BOOTSTRAP_SERVERS");
 var kafkaUsername = Environment.GetEnvironmentVariable("KAFKA_USERNAME");
 var kafkaPassword = Environment.GetEnvironmentVariable("KAFKA_PASSWORD");
+var kafkaSecurityProtocol = Environment.GetEnvironmentVariable("KAFKA_SECURITY_PROTOCOL") ?? "SaslSsl";
+var kafkaSaslMechanism = Environment.GetEnvironmentVariable("KAFKA_SASL_MECHANISM") ?? "ScramSha256";
+var kafkaConsumerGroupId = Environment.GetEnvironmentVariable("KAFKA_CONSUMER_GROUP_ID") ?? "auth-service-group";
+var kafkaTopicPrefix = Environment.GetEnvironmentVariable("KAFKA_TOPIC_PREFIX") ?? "auth";
 
 if (!string.IsNullOrEmpty(kafkaBootstrap) && !kafkaBootstrap.Contains("localhost"))
 {
@@ -463,26 +467,22 @@ if (!string.IsNullOrEmpty(kafkaBootstrap) && !kafkaBootstrap.Contains("localhost
         options.BootstrapServers = kafkaBootstrap;
         options.Username = kafkaUsername;
         options.Password = kafkaPassword;
-        options.TopicPrefix = "auth";
-        options.ConsumerGroupId = "auth-service-group";
+        options.SecurityProtocol = kafkaSecurityProtocol;
+        options.SaslMechanism = kafkaSaslMechanism;
+        options.ConsumerGroupId = kafkaConsumerGroupId;
+        options.TopicPrefix = kafkaTopicPrefix;
     });
 
-    // 🧠 Rules Applied: Strict Singleton registration to prevent unmanaged native memory leaks
     builder.Services.AddSingleton<IKafkaProducer, KafkaProducer>();
-    
-    // 🏗️ Rules Applied: Isolated hosted background worker loop running separate from RabbitMQ
     builder.Services.AddHostedService<KafkaConsumer>();
-    
-    Console.WriteLine($"✅ Kafka archive engine successfully registered: {kafkaBootstrap}");
+
+    Console.WriteLine($"✅ Kafka registered: {kafkaBootstrap} | Mechanism: {kafkaSaslMechanism}");
 }
 else
 {
-    Console.WriteLine("⚠️ Kafka environment parameters absent - Archive engine operating in Graceful Degradation mode.");
-    
-    // Injecting the No-Op fallback component prevents dependency injection resolution breakages
+    Console.WriteLine("⚠️ Kafka not configured — running in graceful degradation mode.");
     builder.Services.AddSingleton<IKafkaProducer, NullKafkaProducer>();
 }
-
 
 
 

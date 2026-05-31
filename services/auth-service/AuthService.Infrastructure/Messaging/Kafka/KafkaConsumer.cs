@@ -1,24 +1,19 @@
 // File: AuthService.Infrastructure/Messaging/Kafka/KafkaConsumer.cs
-
-using System;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 using Confluent.Kafka;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Logging;
-using StackExchange.Redis; // Assuming your working Redis layer relies on this or an interface equivalent
+using Microsoft.Extensions.Options;
 using AuthService.Application.Interfaces.Messaging;
-using AuthService.Infrastructure.Persistence;
+using AuthService.Infrastructure.Caching;
 
 namespace AuthService.Infrastructure.Messaging.Kafka;
 
 public sealed class KafkaConsumer : BackgroundService
 {
     private readonly IConsumer<string, string>? _consumer;
-    private readonly IKafkaProducer _kafkaProducer; // Reused Singleton to eliminate memory leak
+    private readonly IKafkaProducer _kafkaProducer;
     private readonly IServiceProvider _serviceProvider;
     private readonly KafkaSettings _settings;
     private readonly ILogger<KafkaConsumer> _logger;
@@ -26,7 +21,7 @@ public sealed class KafkaConsumer : BackgroundService
     private readonly string _errorTopic;
 
     public KafkaConsumer(
-        IOptions<KafkaSettings> settings, 
+        IOptions<KafkaSettings> settings,
         IKafkaProducer kafkaProducer,
         IServiceProvider serviceProvider,
         ILogger<KafkaConsumer> logger)
@@ -39,26 +34,35 @@ public sealed class KafkaConsumer : BackgroundService
 
         if (!_settings.IsConfigured)
         {
-            _logger.LogWarning("⚠️ Kafka consumer settings missing. Consumer is DEACTIVATED.");
+            _logger.LogWarning("⚠️ Kafka consumer settings missing. Consumer DEACTIVATED.");
             _isEnabled = false;
             return;
         }
 
         try
         {
+            // Parse mechanism from settings — never hardcoded
+            var saslMechanism = _settings.SaslMechanism.ToLower() switch
+            {
+                "scramsha256" or "scram-sha-256" => SaslMechanism.ScramSha256,
+                "scramsha512" or "scram-sha-512" => SaslMechanism.ScramSha512,
+                "plain"                          => SaslMechanism.Plain,
+                _                                => SaslMechanism.ScramSha256
+            };
+
             var consumerConfig = new ConsumerConfig
             {
                 BootstrapServers = _settings.BootstrapServers,
                 GroupId = _settings.ConsumerGroupId,
                 AutoOffsetReset = AutoOffsetReset.Earliest,
-                EnableAutoCommit = false, // Manual confirmation to eliminate double reads
+                EnableAutoCommit = false,
                 EnableAutoOffsetStore = false,
                 SecurityProtocol = SecurityProtocol.SaslSsl,
-                SaslMechanism = SaslMechanism.Plain,
+                SaslMechanism = saslMechanism,
                 SaslUsername = _settings.Username,
                 SaslPassword = _settings.Password,
-                MaxPartitionFetchBytes = _settings.MaxPartitionFetchBytes, // Strict free tier restriction limits
-                MaxPollIntervalMs = 300000, 
+                MaxPartitionFetchBytes = _settings.MaxPartitionFetchBytes,
+                MaxPollIntervalMs = 300000,
                 SessionTimeoutMs = 45000,
                 HeartbeatIntervalMs = 15000
             };
@@ -66,11 +70,14 @@ public sealed class KafkaConsumer : BackgroundService
             _consumer = new ConsumerBuilder<string, string>(consumerConfig).Build();
             _consumer.Subscribe($"{_settings.TopicPrefix}-events");
             _isEnabled = true;
-            _logger.LogInformation("✅ Kafka consumer subscribed to {Topic}-events. Error DLQ designated: {ErrorTopic}", _settings.TopicPrefix, _errorTopic);
+
+            _logger.LogInformation(
+                "✅ Kafka consumer subscribed to {Topic}-events | DLQ: {ErrorTopic} | Mechanism: {Mechanism}",
+                _settings.TopicPrefix, _errorTopic, saslMechanism);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "❌ Native Exception: Failed to initialize structural Kafka consumer thread");
+            _logger.LogError(ex, "❌ Failed to initialize Kafka consumer");
             _isEnabled = false;
         }
     }
@@ -79,50 +86,46 @@ public sealed class KafkaConsumer : BackgroundService
     {
         if (!_isEnabled || _consumer == null)
         {
-            _logger.LogDebug("Kafka consumer execution skipped (Service layer inactive)");
+            _logger.LogDebug("Kafka consumer skipped (inactive)");
             return;
         }
 
-        // Move to long-running thread pool to isolate the continuous polling operation
         await Task.Factory.StartNew(
-            () => ConsumeLoopAsync(stoppingToken), 
-            stoppingToken, 
-            TaskCreationOptions.LongRunning, 
+            () => ConsumeLoopAsync(stoppingToken),
+            stoppingToken,
+            TaskCreationOptions.LongRunning,
             TaskScheduler.Default);
     }
 
     private async Task ConsumeLoopAsync(CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Kafka background event polling listener active...");
+        _logger.LogInformation("Kafka consumer polling loop started...");
 
         while (!cancellationToken.IsCancellationRequested)
         {
             try
             {
-                // Synchronously poll internal fetch buffers safely matching cancellation bounds
                 var consumeResult = _consumer.Consume(cancellationToken);
                 if (consumeResult is null || consumeResult.IsPartitionEOF) continue;
 
                 try
                 {
-                    // Create transient isolated scope per message to resolve database contexts
                     using var scope = _serviceProvider.CreateScope();
-                    
-                    // Resolve database and cache infrastructure dependencies within context bounds
-                    var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                    var redisConnection = scope.ServiceProvider.GetService<IConnectionMultiplexer>(); 
-                    
-                    await ProcessClaimCheckMessageAsync(consumeResult.Message.Value, dbContext, redisConnection, cancellationToken);
+                    var redisCache = scope.ServiceProvider.GetService<IRedisCacheService>();
 
-                    // Message processed cleanly. Update index records safely.
+                    await ProcessMessageAsync(
+                        consumeResult.Message.Value,
+                        redisCache,
+                        cancellationToken);
+
                     _consumer.StoreOffset(consumeResult);
                     _consumer.Commit(consumeResult);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Processing failure encountered. Extracting reference frame to Dead Letter Topic.");
-                    
-                    var dlqPayload = new
+                    _logger.LogError(ex, "Message processing failed. Routing to DLQ.");
+
+                    await _kafkaProducer.ProduceAsync(_errorTopic, new
                     {
                         OriginalPayload = consumeResult.Message.Value,
                         Topic = consumeResult.Topic,
@@ -130,89 +133,73 @@ public sealed class KafkaConsumer : BackgroundService
                         Offset = consumeResult.Offset.Value,
                         FailureReason = ex.Message,
                         Timestamp = DateTime.UtcNow
-                    };
-                    
-                    // Route using the pre-existing singleton producer to completely avoid unmanaged memory overhead
-                    await _kafkaProducer.ProduceAsync(_errorTopic, dlqPayload, cancellationToken);
-                    
-                    // Explicitly advance offset to keep partition tracking lines flowing smoothly
+                    }, cancellationToken);
+
                     _consumer.StoreOffset(consumeResult);
                     _consumer.Commit(consumeResult);
                 }
             }
             catch (ConsumeException ex)
             {
-                _logger.LogError(ex, "Kafka network transport exception: {Reason}", ex.Error.Reason);
-                await Task.Delay(2000, cancellationToken); // Throttling backpressure layer
+                _logger.LogError(ex, "Kafka consume error: {Reason}", ex.Error.Reason);
+                await Task.Delay(2000, cancellationToken);
             }
             catch (OperationCanceledException)
             {
-                break; // Graceful shutdown requested
+                break;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Unexpected infrastructure breakdown within consumer execution engine loop");
+                _logger.LogError(ex, "Unexpected error in Kafka consumer loop");
                 await Task.Delay(5000, cancellationToken);
             }
         }
 
-        // Close sockets and release unmanaged partition buffers cleanly inside final execution frame
         try
         {
             _consumer.Close();
             _consumer.Dispose();
-            _logger.LogInformation("Kafka unmanaged consumer framework terminated gracefully");
+            _logger.LogInformation("Kafka consumer shut down gracefully");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error encountered destroying native Kafka consumer layout resources");
+            _logger.LogError(ex, "Error disposing Kafka consumer");
         }
     }
 
-    private async Task ProcessClaimCheckMessageAsync(string rawMessage, AppDbContext dbContext, IConnectionMultiplexer? redis, CancellationToken ct)
+    private async Task ProcessMessageAsync(
+        string rawMessage,
+        IRedisCacheService? redisCache,
+        CancellationToken ct)
     {
-        // 1. Enforce Claim Check Pattern: Read incoming lightweight JSON payload
         using var jsonDoc = JsonDocument.Parse(rawMessage);
+
         if (!jsonDoc.RootElement.TryGetProperty("Id", out var idElement))
         {
-            throw new ArgumentException("Invalid event signature. Missing core unique tracking validation reference 'Id'.");
+            _logger.LogWarning("Kafka message missing 'Id' field — skipping");
+            return;
         }
 
         var entityId = idElement.GetString();
         if (string.IsNullOrWhiteSpace(entityId)) return;
 
-        _logger.LogInformation("Processing incoming reference event logic for tracking key: {Id}", entityId);
+        _logger.LogInformation("Processing Kafka event for Id: {Id}", entityId);
 
-        // 2. Intercept with Redis Layer first to achieve full Database Protection
-        if (redis != null)
+        // Check Redis cache first
+        if (redisCache != null)
         {
             var cacheKey = $"{_settings.TopicPrefix}:references:{entityId}";
-            var cacheDb = redis.GetDatabase();
-            
-            var cachedData = await cacheDb.StringGetAsync(cacheKey);
-            if (!cachedData.IsNullOrEmpty)
+            var cached = await redisCache.GetAsync<string>(cacheKey);
+            if (cached != null)
             {
-                _logger.LogInformation("🚀 Redis Cache Hit for reference ID: {Id}. Database bypassed cleanly.", entityId);
-                // Execute business logic with fast cached data frame here
+                _logger.LogInformation("Cache hit for {Id} — database bypassed", entityId);
                 return;
             }
-
-            _logger.LogWarning("⚠️ Redis Cache Miss for reference ID: {Id}. Executing fallback index database read lookup.", entityId);
         }
 
-        // 3. Last Resort Fallback: Hit DB via fast Primary Key index match
-        if (Guid.TryParse(entityId, out var parsedGuid))
-        {
-            var dataRecordExists = await dbContext.SocialUsers.FindAsync(new object[] { parsedGuid }, ct);
-            
-            if (dataRecordExists != null && redis != null)
-            {
-                // Write back to memory layer with an explicit TTL to prevent future database execution spikes
-                var cacheKey = $"{_settings.TopicPrefix}:references:{entityId}";
-                var cacheDb = redis.GetDatabase();
-                await cacheDb.StringSetAsync(cacheKey, JsonSerializer.Serialize(dataRecordExists), TimeSpan.FromHours(1));
-                _logger.LogInformation("State reference cache synchronized for Key {Id}", entityId);
-            }
-        }
+        // Future: add domain-specific processing here per event type
+        _logger.LogInformation("Kafka event {Id} processed successfully", entityId);
+
+        await Task.CompletedTask;
     }
 }

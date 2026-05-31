@@ -1,0 +1,20 @@
+name: Render Free Tier Keep-Alive
+
+on:
+  schedule:
+    - cron: '*/14 * * * *'  # Executes every 14 minutes to bypass Render's 15-minute sleep window
+  workflow_dispatch:        # Allows you to trigger the pings manually from the GitHub UI
+
+jobs:
+  ping-services:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Keep Auth Service Awake
+        run: |
+          curl -f https://onrender.com \
+            || echo "⚠️ Auth service cold start detected - wake up signal dispatched."
+
+      - name: Keep API Gateway Awake
+        run: |
+          curl -f https://onrender.com \
+            || echo "⚠️ API Gateway ping failed."

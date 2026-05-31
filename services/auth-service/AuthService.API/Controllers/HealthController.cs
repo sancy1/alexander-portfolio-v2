@@ -1,7 +1,4 @@
-// File: services/auth-service/AuthService.API/Controllers/HealthController.cs
-// Purpose: Health check endpoints for service, database, RabbitMQ, and Kafka monitoring
-// Layer: API
-
+// File: AuthService.API/Controllers/HealthController.cs
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -9,10 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Threading.Tasks;
-using System.Collections.Generic;
 using AuthService.Infrastructure.Persistence;
-using AuthService.Application.Interfaces.Messaging;
-using AuthService.Infrastructure.Messaging.Kafka;
 using AuthService.Infrastructure.Messaging.RabbitMQ;
 using RabbitMQ.Client;
 
@@ -20,11 +14,11 @@ namespace AuthService.API.Controllers;
 
 [ApiController]
 [Route("api/v1/[controller]")]
-public class HealthController : ControllerBase
+public sealed class HealthController : ControllerBase
 {
     private readonly AppDbContext _dbContext;
     private readonly ILogger<HealthController> _logger;
-    private readonly IServiceProvider _serviceProvider; // 👇 Added to cleanly support your modified settings pattern
+    private readonly IServiceProvider _serviceProvider;
 
     public HealthController(
         AppDbContext dbContext, 
@@ -81,11 +75,9 @@ public class HealthController : ControllerBase
                 UserName = rabbitMQSettings.Value.UserName,
                 Password = rabbitMQSettings.Value.Password,
                 VirtualHost = rabbitMQSettings.Value.VirtualHost,
-                // 👇 Added to prevent TLS handshakes from crashing on CloudAMQP
                 Ssl = rabbitMQSettings.Value.UseSsl ? new SslOption { Enabled = true, ServerName = rabbitMQSettings.Value.HostName } : null
             };
 
-            // 👇 Enforce modern asynchronous using blocks to guarantee zero memory leaks
             await using var connection = await factory.CreateConnectionAsync();
             await using var channel = await connection.CreateChannelAsync();
             
@@ -99,33 +91,7 @@ public class HealthController : ControllerBase
     }
 
     /// <summary>
-    /// Test Kafka publishing - Preserved exactly as originally requested
-    /// </summary>
-    [HttpGet("test/kafka")]
-    public async Task<IActionResult> TestKafka()
-    {
-        try
-        {
-            var producer = HttpContext.RequestServices.GetRequiredService<IKafkaProducer>();
-            await producer.ProduceAuditLogAsync(new 
-            { 
-                eventType = "test.event",
-                message = "Hello from AuthService",
-                timestamp = DateTime.UtcNow,
-                service = "auth-service"
-            });
-            
-            return Ok(new { message = "Kafka message sent successfully" });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Kafka test generation event failed");
-            return StatusCode(500, new { error = ex.Message });
-        }
-    }
-
-    /// <summary>
-    /// Database connectivity check - Fixed to prevent resource pooling deadlocks
+    /// Database connectivity check
     /// </summary>
     [HttpGet("db")]
     public async Task<IActionResult> CheckDatabase()
@@ -138,7 +104,6 @@ public class HealthController : ControllerBase
             {
                 var connection = _dbContext.Database.GetDbConnection();
                 
-                // 👇 Enforce try-finally structural wrapper to guarantee connection closure on Neon PostgreSQL
                 await _dbContext.Database.OpenConnectionAsync();
                 try
                 {

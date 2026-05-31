@@ -1,4 +1,4 @@
-// File: services/auth-service/AuthService.Application/Features/Social/Commands/HandleOAuthLoginHandler.cs
+// File: AuthService.Application/Features/Social/Commands/HandleOAuthLoginHandler.cs
 using MediatR;
 using System;
 using System.Threading;
@@ -13,7 +13,7 @@ using AuthService.Domain.Interfaces;
 
 namespace AuthService.Application.Features.Social.Commands;
 
-public class HandleOAuthLoginHandler : IRequestHandler<HandleOAuthLoginCommand, AuthResponse>
+public sealed class HandleOAuthLoginHandler : IRequestHandler<HandleOAuthLoginCommand, AuthResponse>
 {
     private readonly ISocialUserRepository _socialUserRepository;
     private readonly IOutboxRepository _outboxRepository;
@@ -41,7 +41,6 @@ public class HandleOAuthLoginHandler : IRequestHandler<HandleOAuthLoginCommand, 
         {
             if (existingByEmail.Provider == request.Provider && existingByEmail.ProviderId == request.ProviderId)
             {
-                // Check and execute avatar patches in memory 
                 if (string.IsNullOrEmpty(existingByEmail.AvatarUrl) && !string.IsNullOrEmpty(request.AvatarUrl))
                 {
                     existingByEmail.UpdateAvatar(request.AvatarUrl);
@@ -52,56 +51,59 @@ public class HandleOAuthLoginHandler : IRequestHandler<HandleOAuthLoginCommand, 
                     existingByEmail.RecordLogin();
                     _socialUserRepository.Update(existingByEmail);
                     
-                    await OutboxHelper.AddToOutboxAsync(
-                        _outboxRepository,
-                        _unitOfWork,
-                        "social.user.loggedin",
-                        "user.loggedin",
-                        "rabbitmq",  // Changed from "both" to "rabbitmq"
-                        new UserLoggedInEvent
-                        {
-                            EventType = "social.user.loggedin",
-                            OccurredAt = DateTime.UtcNow,
-                            UserId = existingByEmail.Id,
-                            Email = existingByEmail.Email,
-                            UserType = "SocialUser",
-                            LoginMethod = request.Provider.ToString().ToLower(),
-                            ClientIp = request.ClientIp,
-                            UserAgent = request.UserAgent
-                        }
-                    );
+                    var loginEvent = new UserLoggedInEvent
+                    {
+                        EventType = "social.user.loggedin",
+                        OccurredAt = DateTime.UtcNow,
+                        UserId = existingByEmail.Id,
+                        Email = existingByEmail.Email,
+                        UserType = "SocialUser",
+                        LoginMethod = request.Provider.ToString().ToLower(),
+                        ClientIp = request.ClientIp,
+                        UserAgent = request.UserAgent
+                    };
 
+                    // 📬 Post Office Channel: Microservice messaging notification tasks
+                    await OutboxHelper.AddToOutboxAsync(_outboxRepository, "social.user.loggedin", "user.loggedin", "rabbitmq", loginEvent);
+                    
+                    // 🗄️ Big Archive Channel: Permanent chronological event history
+                    await OutboxHelper.AddToOutboxAsync(_outboxRepository, "auth-events", "social.user.loggedin", "kafka", loginEvent);
+
+                    // 🏗️ Single Atomic Push for the Success Pathway
                     await _unitOfWork.SaveChangesAsync(cancellationToken);
                     
                     var token = _jwtGenerator.GenerateUserToken(existingByEmail);
                     return AuthResponse.CreateSuccess(token, existingByEmail.Id);
                 }
 
-                // User exists but registration is half-baked
+                _socialUserRepository.Update(existingByEmail);
+                // 🏗️ Single Atomic Push for the Profile Incomplete Pathway
                 await _unitOfWork.SaveChangesAsync(cancellationToken);
                 return AuthResponse.CreateProfileIncomplete(existingByEmail.Id);
             }
             
-            // Email account mismatch collision
+            // Email account mismatch collision - send to Kafka only (security audit trail)
+            var mismatchPayload = new
+            {
+                eventType = "security.failed_oauth_login",
+                email = request.Email,
+                occurredAt = DateTime.UtcNow,
+                reason = "provider_mismatch",
+                attemptedProvider = request.Provider.ToString(),
+                existingProvider = existingByEmail.Provider.ToString(),
+                clientIp = request.ClientIp,
+                userAgent = request.UserAgent,
+                severity = "Medium"
+            };
+
             await OutboxHelper.AddToOutboxAsync(
                 _outboxRepository,
-                _unitOfWork,
+                "security-audit-logs",
                 "security.failed_oauth_login",
-                "security.failed_login",
-                "rabbitmq",  // Changed from "kafka" to "rabbitmq"
-                new
-                {
-                    eventType = "security.failed_oauth_login",
-                    email = request.Email,
-                    occurredAt = DateTime.UtcNow,
-                    reason = "provider_mismatch",
-                    attemptedProvider = request.Provider.ToString(),
-                    existingProvider = existingByEmail.Provider.ToString(),
-                    clientIp = request.ClientIp,
-                    userAgent = request.UserAgent,
-                    severity = "Medium"
-                });
+                "kafka",
+                mismatchPayload);
             
+            // 🏗️ Single Atomic Push for the Security Violation Pathway
             await _unitOfWork.SaveChangesAsync(cancellationToken);
             
             return AuthResponse.CreateFailure($"An account with email {request.Email} already exists. Please login using {existingByEmail.Provider} instead.");
@@ -122,31 +124,30 @@ public class HandleOAuthLoginHandler : IRequestHandler<HandleOAuthLoginCommand, 
                 existingByProvider.RecordLogin();
                 _socialUserRepository.Update(existingByProvider);
                 
-                await OutboxHelper.AddToOutboxAsync(
-                    _outboxRepository,
-                    _unitOfWork,
-                    "social.user.loggedin",
-                    "user.loggedin",
-                    "rabbitmq",  // Changed from "both" to "rabbitmq"
-                    new UserLoggedInEvent
-                    {
-                        EventType = "social.user.loggedin",
-                        OccurredAt = DateTime.UtcNow,
-                        UserId = existingByProvider.Id,
-                        Email = existingByProvider.Email,
-                        UserType = "SocialUser",
-                        LoginMethod = request.Provider.ToString().ToLower(),
-                        ClientIp = request.ClientIp,
-                        UserAgent = request.UserAgent
-                    }
-                );
+                var loginEvent = new UserLoggedInEvent
+                {
+                    EventType = "social.user.loggedin",
+                    OccurredAt = DateTime.UtcNow,
+                    UserId = existingByProvider.Id,
+                    Email = existingByProvider.Email,
+                    UserType = "SocialUser",
+                    LoginMethod = request.Provider.ToString().ToLower(),
+                    ClientIp = request.ClientIp,
+                    UserAgent = request.UserAgent
+                };
 
+                await OutboxHelper.AddToOutboxAsync(_outboxRepository, "social.user.loggedin", "user.loggedin", "rabbitmq", loginEvent);
+                await OutboxHelper.AddToOutboxAsync(_outboxRepository, "auth-events", "social.user.loggedin", "kafka", loginEvent);
+
+                // 🏗️ Single Atomic Push for the Success Pathway
                 await _unitOfWork.SaveChangesAsync(cancellationToken);
                 
                 var token = _jwtGenerator.GenerateUserToken(existingByProvider);
                 return AuthResponse.CreateSuccess(token, existingByProvider.Id);
             }
             
+            _socialUserRepository.Update(existingByProvider);
+            // 🏗️ Single Atomic Push for the Provider Path Profile Incomplete Pathway
             await _unitOfWork.SaveChangesAsync(cancellationToken);
             return AuthResponse.CreateProfileIncomplete(existingByProvider.Id);
         }
@@ -161,25 +162,23 @@ public class HandleOAuthLoginHandler : IRequestHandler<HandleOAuthLoginCommand, 
 
         await _socialUserRepository.AddAsync(newUser);
         
-        await OutboxHelper.AddToOutboxAsync(
-            _outboxRepository,
-            _unitOfWork,
-            "social.user.registered",
-            "user.registered",
-            "rabbitmq",  // Changed from "kafka" to "rabbitmq"
-            new UserRegisteredEvent
-            {
-                EventType = "social.user.registered",
-                OccurredAt = DateTime.UtcNow,
-                UserId = newUser.Id,
-                Email = newUser.Email,
-                DisplayName = newUser.DisplayName,
-                Provider = request.Provider.ToString().ToLower(),
-                IsProfileComplete = false,
-                ClientIp = request.ClientIp,
-                UserAgent = request.UserAgent
-            });
+        var registrationEvent = new UserRegisteredEvent
+        {
+            EventType = "social.user.registered",
+            OccurredAt = DateTime.UtcNow,
+            UserId = newUser.Id,
+            Email = newUser.Email,
+            DisplayName = newUser.DisplayName,
+            Provider = request.Provider.ToString().ToLower(),
+            IsProfileComplete = false,
+            ClientIp = request.ClientIp,
+            UserAgent = request.UserAgent
+        };
 
+        await OutboxHelper.AddToOutboxAsync(_outboxRepository, "social.user.registered", "user.registered", "rabbitmq", registrationEvent);
+        await OutboxHelper.AddToOutboxAsync(_outboxRepository, "auth-events", "social.user.registered", "kafka", registrationEvent);
+
+        // 🏗️ Single Atomic Push for the Cold Registration Pathway
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         return AuthResponse.CreateProfileIncomplete(newUser.Id);

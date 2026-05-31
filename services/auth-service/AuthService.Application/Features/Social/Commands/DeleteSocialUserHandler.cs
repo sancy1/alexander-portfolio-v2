@@ -1,28 +1,32 @@
 // File: AuthService.Application/Features/Social/Commands/DeleteSocialUserHandler.cs
-// Purpose: Handles social user self-deletion
-// Layer: Application
-
 using MediatR;
+using System;
+using System.Threading;
+using System.Threading.Tasks;
 using AuthService.Application.DTOs.Responses;
 using AuthService.Application.Interfaces.Persistence;
 using AuthService.Application.Interfaces.Services;
+using AuthService.Application.Common;
 
 namespace AuthService.Application.Features.Social.Commands;
 
-public class DeleteSocialUserHandler : IRequestHandler<DeleteSocialUserCommand, DeleteAccountResponse>
+public sealed class DeleteSocialUserHandler : IRequestHandler<DeleteSocialUserCommand, DeleteAccountResponse>
 {
     private readonly ISocialUserRepository _socialUserRepository;
     private readonly IUnitOfWork _unitOfWork;
     private readonly ICloudinaryService _cloudinaryService;
+    private readonly IOutboxRepository _outboxRepository;
 
     public DeleteSocialUserHandler(
         ISocialUserRepository socialUserRepository,
         IUnitOfWork unitOfWork,
-        ICloudinaryService cloudinaryService)
+        ICloudinaryService cloudinaryService,
+        IOutboxRepository outboxRepository)
     {
         _socialUserRepository = socialUserRepository;
         _unitOfWork = unitOfWork;
         _cloudinaryService = cloudinaryService;
+        _outboxRepository = outboxRepository;
     }
 
     public async Task<DeleteAccountResponse> Handle(DeleteSocialUserCommand request, CancellationToken cancellationToken)
@@ -40,29 +44,65 @@ public class DeleteSocialUserHandler : IRequestHandler<DeleteSocialUserCommand, 
             return new DeleteAccountResponse { Success = false, Message = "Email confirmation does not match" };
         }
 
+        // Cache the avatar URL metadata snapshot prior to state mutations
+        var avatarUrlSnapshot = user.AvatarUrl;
+
+        // 💾 Claim Check Rule: Track lightweight metadata primitives (~200 bytes)
+        var deletionEvent = new
+        {
+            eventType = request.PermanentDelete ? "social.account.permanently_deleted" : "social.account.soft_deleted",
+            accountId = user.Id,
+            accountType = "social_user",
+            email = user.Email,
+            displayName = user.DisplayName,
+            provider = user.Provider.ToString(),
+            reason = request.Reason,
+            timestamp = DateTime.UtcNow,
+            severity = request.PermanentDelete ? "Critical" : "High"
+        };
+
+        // ====================================================================
+        // BRANCH A: PERMANENT PURGE PIPELINE
+        // ====================================================================
         if (request.PermanentDelete)
         {
-            // HARD DELETE - Immediate, Permanent
+            // 🗄️ Big Archive: Log chronological timeline entry to disk permanently
+            await OutboxHelper.AddToOutboxAsync(
+                _outboxRepository,
+                "security-audit-logs",
+                "social.account.permanently_deleted",
+                "kafka",
+                deletionEvent);
+
+            // 📬 Post Office: Broadcast deletion event so other microservices drop user references
+            await OutboxHelper.AddToOutboxAsync(
+                _outboxRepository,
+                "social.account.permanently_deleted",
+                "social.account.permanently_deleted",
+                "rabbitmq",
+                deletionEvent);
             
-            // Delete avatar from Cloudinary if exists (and not default social avatar)
-            if (!string.IsNullOrEmpty(user.AvatarUrl) && 
-                !user.AvatarUrl.Contains("googleusercontent") && 
-                !user.AvatarUrl.Contains("github"))
+            // Queue destruction inside the EF Core entity tracker
+            _socialUserRepository.Delete(user);
+            
+            // 🏗️ Rules Applied: SINGLE ATOMIC TRANSACTION COMMIT
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+            
+            // ☁️ Execute external media cleanup outside the critical database transaction block
+            if (!string.IsNullOrEmpty(avatarUrlSnapshot) && 
+                !avatarUrlSnapshot.Contains("googleusercontent", StringComparison.OrdinalIgnoreCase) && 
+                !avatarUrlSnapshot.Contains("github", StringComparison.OrdinalIgnoreCase))
             {
                 try
                 {
-                    var publicId = ExtractPublicId(user.AvatarUrl);
+                    var publicId = ExtractPublicId(avatarUrlSnapshot);
                     await _cloudinaryService.DeleteImageAsync(publicId);
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Failed to delete avatar: {ex.Message}");
+                    Console.WriteLine($"Non-critical infrastructure failure: Cloudinary cleanup skipped: {ex.Message}");
                 }
             }
-
-            // Permanently remove from database
-            _socialUserRepository.Delete(user);
-            await _unitOfWork.SaveChangesAsync(cancellationToken);
 
             return new DeleteAccountResponse
             {
@@ -71,11 +111,31 @@ public class DeleteSocialUserHandler : IRequestHandler<DeleteSocialUserCommand, 
                 IsReversible = false
             };
         }
+        // ====================================================================
+        // BRANCH B: SOFT REVERSIBLE PIPELINE
+        // ====================================================================
         else
         {
-            // SOFT DELETE - 30 days reversible
+            // 📬 Post Office Channel
+            await OutboxHelper.AddToOutboxAsync(
+                _outboxRepository,
+                "social.account.soft_deleted",
+                "social.account.soft_deleted",
+                "rabbitmq",
+                deletionEvent);
+
+            // 🗄️ Big Archive Channel
+            await OutboxHelper.AddToOutboxAsync(
+                _outboxRepository,
+                "security-audit-logs",
+                "social.account.soft_deleted",
+                "kafka",
+                deletionEvent);
+            
             user.SoftDelete(request.Reason ?? "User requested deletion");
             _socialUserRepository.Update(user);
+
+            // Singular atomic transactional push for soft deletion
             await _unitOfWork.SaveChangesAsync(cancellationToken);
 
             return new DeleteAccountResponse
@@ -88,7 +148,7 @@ public class DeleteSocialUserHandler : IRequestHandler<DeleteSocialUserCommand, 
         }
     }
 
-    private string ExtractPublicId(string avatarUrl)
+    private static string ExtractPublicId(string avatarUrl)
     {
         var parts = avatarUrl.Split('/');
         var filename = parts[^1];

@@ -1,11 +1,17 @@
+// File: AuthService.Application/Features/Admin/Commands/UpdateAdminProfileHandler.cs
 using MediatR;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using AuthService.Application.DTOs.Responses;
 using AuthService.Application.Interfaces.Persistence;
 using AuthService.Application.Common;
 
 namespace AuthService.Application.Features.Admin.Commands;
 
-public class UpdateAdminProfileHandler : IRequestHandler<UpdateAdminProfileCommand, UpdateAdminProfileResponse>
+public sealed class UpdateAdminProfileHandler : IRequestHandler<UpdateAdminProfileCommand, UpdateAdminProfileResponse>
 {
     private readonly IAdminRepository _adminRepository;
     private readonly IUnitOfWork _unitOfWork;
@@ -56,30 +62,45 @@ public class UpdateAdminProfileHandler : IRequestHandler<UpdateAdminProfileComma
             changes.Add($"email: {oldEmail} → {request.Email}");
         }
 
+        // 1. Mutate tracking status parameters strictly inside in-memory state lines
         admin.UpdateProfile(request.Username, request.Email?.ToLower());
         _adminRepository.Update(admin);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        // Log profile update if anything changed
+        // 2. Queue outbox message entities inside the same tracking frame ONLY if data changes occurred
         if (changes.Any())
         {
+            // 💾 Claim Check Rule: Keep payload under ~200 bytes containing primitive delta changes
+            var profileUpdateEvent = new
+            {
+                eventType = "admin.profile_updated",
+                adminId = admin.Id,
+                username = admin.Username,
+                email = admin.Email,
+                changes = changes,
+                timestamp = DateTime.UtcNow,
+                severity = "Low"
+            };
+
+            // 📬 Post Office: Real-time broadcast notification outbox sync
             await OutboxHelper.AddToOutboxAsync(
                 _outboxRepository,
-                _unitOfWork,
                 "admin.profile_updated",
+                "admin.profile_updated",
+                "rabbitmq",
+                profileUpdateEvent);
+
+            // 🗄️ Big Archive: Log chronological application history permanently to disk
+            await OutboxHelper.AddToOutboxAsync(
+                _outboxRepository,
+                "auth-events", // Target active consumer routing streams directly
                 "admin.profile_updated",
                 "kafka",
-                new
-                {
-                    eventType = "admin.profile_updated",
-                    adminId = admin.Id,
-                    username = admin.Username,
-                    email = admin.Email,
-                    changes = changes,
-                    timestamp = DateTime.UtcNow,
-                    severity = "Low"
-                });
+                profileUpdateEvent);
         }
+
+        // 🏗️ Rules Applied: SINGLE ATOMIC COMMIT FOR ALL PHASES
+        // Admin updates and both outbox lines commit in one singular PostgreSQL transaction block.
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         return new UpdateAdminProfileResponse
         {

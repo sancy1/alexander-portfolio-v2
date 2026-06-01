@@ -4,6 +4,7 @@
 
 using System;
 using AuthService.Domain.Enums;
+using System.ComponentModel.DataAnnotations.Schema; // 👈 Add this line at the top
 
 namespace AuthService.Domain.Entities;
 
@@ -42,7 +43,8 @@ public class SocialUser
     public string? Phone { get; private set; }
     public string? Location { get; private set; }
     public string? Website { get; private set; }
-    public string? SocialLinks { get; private set; } // Stored as JSON string representation
+    [Column(TypeName = "jsonb")] // 🔐 Rules Applied: Explicit database JSONB enforcement!
+    public string? SocialLinks { get; private set; } 
 
     // EF Core constructor
     private SocialUser() { }

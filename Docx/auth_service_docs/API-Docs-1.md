@@ -918,6 +918,7 @@ Updated Endpoint Summary Table (All Endpoints)
 12	GET	/api/v1/admins/account/status	✅	Check admin deletion status
 13	DELETE	/api/v1/admins/account	✅	Delete admin account
 14	POST	/api/v1/admins/account/restore	✅	Restore admin account
+
 15	GET	/api/v1/auth/google/login	❌	Google login
 16	GET	/api/v1/auth/github/login	❌	GitHub login
 17	POST	/api/v1/auth/users/complete-registration	❌	Complete social profile

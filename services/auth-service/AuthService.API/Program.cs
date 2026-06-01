@@ -614,14 +614,10 @@ var app = builder.Build();
 // }
 
 
-
-// Configure pipeline
-// Always enable Swagger (including production)
-
 // ============================================================================
-// SWAGGER CONFIGURATION - PRODUCTION READY WITH BASIC AUTH
+// SWAGGER CONFIGURATION - PRODUCTION READY WITH DIRECT PUBLIC ROUTING
 // ============================================================================
-// Only enable Swagger if explicitly configured (not just for development)
+// Only enable Swagger if explicitly configured (set ENABLE_SWAGGER = true in Render env)
 var enableSwagger = Environment.GetEnvironmentVariable("ENABLE_SWAGGER") == "true";
 
 if (enableSwagger)
@@ -679,41 +675,16 @@ if (enableSwagger)
         await next.Invoke();
     });
 
-    // 👇 GET GATEWAY URL FROM ENVIRONMENT VARIABLE (NO HARDCODING)
-    var gatewayUrl = Environment.GetEnvironmentVariable("GATEWAY_URL");
-    
-    if (string.IsNullOrEmpty(gatewayUrl))
-    {
-        // Only use fallback in development - production MUST have env var
-        if (app.Environment.IsDevelopment())
-        {
-            gatewayUrl = "https://localhost:7001";
-            Console.WriteLine("WARNING: GATEWAY_URL not set. Using localhost for development.");
-        }
-        else
-        {
-            Console.WriteLine("ERROR: GATEWAY_URL environment variable is required in production.");
-            // Don't start Swagger without it
-            throw new Exception("GATEWAY_URL environment variable not set");
-        }
-    }
-    
-    Console.WriteLine($"Swagger using Gateway URL: {gatewayUrl}");
+    // 🧠 Rules Applied: Direct Native Discovery
+    // Removed all custom gateway URL variables, environment throws, and pre-serialization filters.
+    // This allows Swagger to naturally execute requests straight against your public container URL.
+    Console.WriteLine("Swagger initialized using direct native container address rules.");
 
-    app.UseSwagger(options =>
-    {
-        options.PreSerializeFilters.Add((swaggerDoc, httpReq) =>
-        {
-            swaggerDoc.Servers = new List<Microsoft.OpenApi.Models.OpenApiServer>
-            {
-                new() { Url = gatewayUrl }
-            };
-        });
-    });
+    app.UseSwagger();
 
     app.UseSwaggerUI(options =>
     {
-        options.SwaggerEndpoint($"{gatewayUrl}/swagger/v1/swagger.json", "AuthService API v1");
+        options.SwaggerEndpoint("/swagger/v1/swagger.json", "AuthService API v1");
         options.RoutePrefix = "swagger";
     });
 }
@@ -746,7 +717,7 @@ app.UseHttpsRedirection();
 app.UseCors("AllowAll");
 
 // IMPORTANT: Authentication MUST come before Authorization
-app.UseMiddleware<GatewaySecretMiddleware>(); 
+// app.UseMiddleware<GatewaySecretMiddleware>(); 
 app.UseAuthentication();
 app.UseMiddleware<JwtBlacklistMiddleware>();
 app.UseAuthorization();

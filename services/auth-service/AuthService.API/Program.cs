@@ -520,23 +520,21 @@ var app = builder.Build();
 
 
 
-    // ============================================================================
-    // 🔐 DATABASE STARTUP VERIFICATION (With Free-Tier Circuit Breaker Resilience)
+       // ============================================================================
+    // 🔐 DATABASE STARTUP VERIFICATION (With Free-Tier Resilience)
     // ============================================================================
     using (var scope = app.Services.CreateScope())
     {
         var services = scope.ServiceProvider;
         var logger = services.GetRequiredService<ILogger<Program>>();
         
+        // 1. NEON DATABASE CIRCUIT BREAKER LOGIC
         try
         {
             var dbContext = services.GetRequiredService<AppDbContext>();
             var startupVerifier = services.GetRequiredService<IDatabaseStartupVerifier>();
             
             logger.LogInformation("Verifying Neon database connection with strict circuit breaker resilience...");
-            
-            // Timeout protection wrapper to prevent cold start deadlocks
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
             
             var isDbReady = await startupVerifier.VerifyAndWakeDatabaseAsync(dbContext);
             
@@ -557,37 +555,34 @@ var app = builder.Build();
             logger.LogWarning(ex, "⚠️ Critical infrastructure exception intercepted during database startup verification. Bypassing boot block.");
         }
 
-
-
-        // ============================================================================
-        // REDIS STARTUP VERIFICATION
-        // ============================================================================
-        var redisLogger = services.GetRequiredService<ILogger<Program>>();
+        // 2. REDIS CONFIGURATION MONITORING LOGIC
         try
         {
             var cache = services.GetRequiredService<IDistributedCache>();
             var testKey = "startup:ping";
+            
             await cache.SetStringAsync(testKey, "pong", new DistributedCacheEntryOptions
             {
                 AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(30)
             });
+            
             var result = await cache.GetStringAsync(testKey);
             if (result == "pong")
-                redisLogger.LogInformation("✅ Redis connected and working successfully");
+            {
+                logger.LogInformation("✅ Redis connected and working successfully");
+            }
             else
-                redisLogger.LogWarning("⚠️ Redis SET succeeded but GET returned unexpected value");
+            {
+                logger.LogWarning("⚠️ Redis SET succeeded but GET returned unexpected value");
+            }
         }
         catch (Exception ex)
         {
-            redisLogger.LogError(ex, "❌ Redis connection FAILED at startup - token blacklisting will not work");
+            logger.LogError(ex, "❌ Redis connection FAILED at startup - token blacklisting will not work");
         }
-    }
-    catch (Exception ex)
-    {
-        logger.LogCritical(ex, "Database initialization failed. Application shutting down.");
-        Environment.Exit(1);
-    }
-}
+    } // 🔐 Sealing the scope using block cleanly with all brackets balanced perfectly
+
+
 
 // using (var scope = app.Services.CreateScope())
 // {

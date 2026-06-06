@@ -314,16 +314,46 @@ builder.Services.AddHealthChecks()
     .AddNpgSql(databaseUrl, name: "database", tags: new[] { "ready", "live" })
     .AddDbContextCheck<AppDbContext>("dbcontext", tags: new[] { "ready" });
 
-// CORS
+
+
+// ============================================================================
+// CORS CONFIGURATION - PRODUCTION READY
+// ============================================================================
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("AllowAll", policy =>
+    options.AddPolicy("ProductionCorsPolicy", policy =>
+    {
+        // 🔐 Industrial Standard: Specific origins only, no wildcard with credentials
+        policy.WithOrigins(
+                "https://your-react-frontend.onrender.com",  // ⚠️ REPLACE with your actual React URL
+                "http://localhost:5173",                      // Vite React dev (local)
+                "http://localhost:3000",                      // Create React App / Next.js (local)
+                "http://localhost:4200"                       // Angular dev (optional)
+              )
+              .AllowAnyMethod()                               // GET, POST, PUT, DELETE, OPTIONS
+              .AllowAnyHeader()                               // Authorization, Content-Type, etc.
+              .AllowCredentials();                            // Required for JWT cookies/auth headers
+    });
+    
+    // Keep AllowAll for development (optional, remove in production)
+    options.AddPolicy("DevelopmentCors", policy =>
     {
         policy.AllowAnyOrigin()
               .AllowAnyMethod()
               .AllowAnyHeader();
     });
 });
+
+// // CORS
+// builder.Services.AddCors(options =>
+// {
+//     options.AddPolicy("AllowAll", policy =>
+//     {
+//         policy.AllowAnyOrigin()
+//               .AllowAnyMethod()
+//               .AllowAnyHeader();
+//     });
+// });
 
 
 
@@ -713,8 +743,25 @@ if (enableSwagger)
 
 
 
+
+
 app.UseHttpsRedirection();
-app.UseCors("AllowAll");
+
+// 🔐 Use Production CORS policy (or Development based on environment)
+if (app.Environment.IsProduction())
+{
+    app.UseCors("ProductionCorsPolicy");
+}
+else
+{
+    app.UseCors("DevelopmentCors");
+}
+
+// app.UseHttpsRedirection();
+// app.UseCors("AllowAll");
+
+
+
 
 // IMPORTANT: Authentication MUST come before Authorization
 // app.UseMiddleware<GatewaySecretMiddleware>(); 

@@ -185,6 +185,8 @@
 
 // File: services/auth-service/AuthService.Application/Features/Admin/Commands/LoginAdminHandler.cs
 
+// File: services/auth-service/AuthService.Application/Features/Admin/Commands/LoginAdminHandler.cs
+
 using MediatR;
 using System;
 using System.Threading;
@@ -245,7 +247,6 @@ public sealed class LoginAdminHandler : IRequestHandler<LoginAdminCommand, Admin
                 severity = "Medium"
             };
 
-            // Post Office Broadcast Task
             await OutboxHelper.AddToOutboxAsync(
                 _outboxRepository,
                 eventType: "security.failed_login",
@@ -255,7 +256,6 @@ public sealed class LoginAdminHandler : IRequestHandler<LoginAdminCommand, Admin
                 userId: admin.Id.ToString(),
                 userType: "admin");
 
-            // Permanent Security Timeline Log Entry
             await OutboxHelper.AddToOutboxAsync(
                 _outboxRepository,
                 eventType: "security-audit-logs",
@@ -283,7 +283,6 @@ public sealed class LoginAdminHandler : IRequestHandler<LoginAdminCommand, Admin
                 severity = "Medium"
             };
 
-            // Post Office Broadcast Task
             await OutboxHelper.AddToOutboxAsync(
                 _outboxRepository,
                 eventType: "security.failed_login",
@@ -293,7 +292,6 @@ public sealed class LoginAdminHandler : IRequestHandler<LoginAdminCommand, Admin
                 userId: admin.Id.ToString(),
                 userType: "admin");
 
-            // Permanent Security Timeline Log Entry
             await OutboxHelper.AddToOutboxAsync(
                 _outboxRepository,
                 eventType: "security-audit-logs",
@@ -321,7 +319,6 @@ public sealed class LoginAdminHandler : IRequestHandler<LoginAdminCommand, Admin
                 severity = "Medium"
             };
 
-            // Post Office Broadcast Task
             await OutboxHelper.AddToOutboxAsync(
                 _outboxRepository,
                 eventType: "security.failed_login",
@@ -331,7 +328,6 @@ public sealed class LoginAdminHandler : IRequestHandler<LoginAdminCommand, Admin
                 userId: admin?.Id.ToString(),
                 userType: "admin");
 
-            // Permanent Security Timeline Log Entry
             await OutboxHelper.AddToOutboxAsync(
                 _outboxRepository,
                 eventType: "security-audit-logs",
@@ -351,18 +347,18 @@ public sealed class LoginAdminHandler : IRequestHandler<LoginAdminCommand, Admin
         admin.RecordLogin();
         _adminRepository.Update(admin);
 
+        // 🧠 Realignment Fixes Applied: Added userId, renamed to displayName, stripped avatarUrl
         var loginPayload = new
         {
-            username = admin.Username,
-            email = admin.Email, // Resolved: Access primitive string directly
-            avatarUrl = admin.AvatarUrl ?? string.Empty,
-            loginTime = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+            userId = admin.Id.ToString(),
+            email = admin.Email, 
+            displayName = admin.Username,
             loginMethod = "password",
+            loginTime = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
             clientIp = request.ClientIp,
             userAgent = request.UserAgent
         };
 
-        // Write to Outbox for RabbitMQ (Real-time ephemeral broadcast)
         await OutboxHelper.AddToOutboxAsync(
             _outboxRepository,
             eventType: "admin.loggedin",
@@ -372,7 +368,6 @@ public sealed class LoginAdminHandler : IRequestHandler<LoginAdminCommand, Admin
             userId: admin.Id.ToString(),
             userType: "admin");
 
-        // Write to Outbox for Kafka (Permanent Chronological Timeline Log)
         await OutboxHelper.AddToOutboxAsync(
             _outboxRepository,
             eventType: "auth-events",
@@ -382,7 +377,6 @@ public sealed class LoginAdminHandler : IRequestHandler<LoginAdminCommand, Admin
             userId: admin.Id.ToString(),
             userType: "admin");
 
-        // Commit all entities and outbox changes within a single atomic database context transaction
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         var token = _jwtGenerator.GenerateAdminToken(admin);

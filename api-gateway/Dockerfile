@@ -46,5 +46,5 @@ COPY nginx.conf /etc/nginx/nginx.conf.template
 
 EXPOSE 80
 
-# Run substitutions for all three variables, then spin up Nginx inline
+# Execute envsubst variables cleanly and boot up Nginx inline
 CMD ["/bin/sh", "-c", "echo \"=== AUTH_SERVICE_HOST: '${AUTH_SERVICE_HOST}' ===\" && echo \"=== NOTIFICATION_SERVICE_HOST: '${NOTIFICATION_SERVICE_HOST}' ===\" && envsubst '${AUTH_SERVICE_HOST} ${NOTIFICATION_SERVICE_HOST} ${GATEWAY_SECRET}' < /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf && exec nginx -g 'daemon off;'"]

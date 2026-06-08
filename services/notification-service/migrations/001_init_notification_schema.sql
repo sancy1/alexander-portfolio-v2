@@ -1,0 +1,1 @@
+-- Schema initialized successfully. Direct migrations are handled via live cloud states.

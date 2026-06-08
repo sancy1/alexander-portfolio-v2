@@ -1,0 +1,22 @@
+basePath: /
+info:
+  contact: {}
+  description: Core notification handling engine.
+  title: Notification Service API
+  version: "1.0"
+paths:
+  /health:
+    get:
+      description: Returns the status of the database, kafka, and service
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Check service health
+      tags:
+      - Health
+swagger: "2.0"

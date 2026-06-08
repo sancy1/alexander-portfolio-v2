@@ -156,4 +156,34 @@ Employment Market Reality.docx
 Implementation plan.docx
 Dev.txt
 
+# ============================================================================
+# Go (notification-service, ai-service, blog-service, core-info-service)
+# ============================================================================
+**/*.exe
+**/*.test
+**/*.out
+**/vendor/
+**/bin/
+**/dist/
+**/coverage.out
+**/coverage.html
+**/*.prof
+**/*.cov
+**/__debug_bin
+**/__debug_bin.exe
 
+# Go build artifacts
+**/*.o
+**/*.a
+**/*.so
+**/*.dylib
+
+# Go-specific build artifacts for notification-service
+services/notification-service/notification-service
+services/notification-service/notification-service.exe
+services/notification-service/bin/
+services/notification-service/dist/
+services/notification-service/*.test
+services/notification-service/coverage.out
+services/notification-service/__debug_bin
+services/notification-service/__debug_bin.exe

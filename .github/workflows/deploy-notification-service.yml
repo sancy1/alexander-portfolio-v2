@@ -43,7 +43,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22' # Use your specific Go version
+          go-version: '1.25' # Use your specific Go version
           cache-dependency-path: services/notification-service/go.sum
       
       - name: Install dependencies

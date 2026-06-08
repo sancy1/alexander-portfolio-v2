@@ -46,6 +46,5 @@ COPY nginx.conf /etc/nginx/nginx.conf.template
 
 EXPOSE 80
 
-# 🔥 THE BYPASS: Perform runtime configuration substitution and launch Nginx inline. 
-# This completely eliminates external script execution conflicts on the host runtime.
+# Run substitutions for all three variables, then spin up Nginx inline
 CMD ["/bin/sh", "-c", "echo \"=== AUTH_SERVICE_HOST: '${AUTH_SERVICE_HOST}' ===\" && echo \"=== NOTIFICATION_SERVICE_HOST: '${NOTIFICATION_SERVICE_HOST}' ===\" && envsubst '${AUTH_SERVICE_HOST} ${NOTIFICATION_SERVICE_HOST} ${GATEWAY_SECRET}' < /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf && exec nginx -g 'daemon off;'"]

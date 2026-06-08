@@ -63,5 +63,5 @@ echo "=== GATEWAY_SECRET present: '$([ -n "${GATEWAY_SECRET}" ] && echo yes || e
 # Perform the environment substitution
 envsubst '${AUTH_SERVICE_HOST} ${NOTIFICATION_SERVICE_HOST} ${GATEWAY_SECRET}' < /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf
 
-# 🔥 FIX: Explicitly hand execution off directly to Nginx to prevent runtime exec format errors
+# Force absolute direct execution without passing arbitrary string arrays
 exec nginx -g "daemon off;"
